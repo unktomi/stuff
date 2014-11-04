@@ -163,16 +163,6 @@ trait SetterOfSetter[A] {
       }
     }
   }
-
-  def zip[B, C](xs: Observable[B], f: B=>C): Observable[C] = {
-    val self = this
-    new Observable[C] {
-      override def setSetter(xs: Setter[C]): Unit = {
-          se
-      }
-    }
-  }
-
 }
 
 
