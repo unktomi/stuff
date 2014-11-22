@@ -4,6 +4,12 @@ import scala.collection.mutable
 import Observables._
 import Lenses._
 
+
+// type GetterOfGetter[A] = Getter[Getter[A]]
+trait GetterOfGetter[A] {
+  def getGetter: Getter[A]
+}
+
 // type SetterOfSetter[A] = Setter[Setter[A]]
 trait SetterOfSetter[A] {
 
@@ -187,10 +193,14 @@ object Observables {
   def nop[A] = new SetterOfSetter[A] {
     def setSetter(xs: Setter[A]): Unit = {}
   }
+
   type Observer[A] = Setter[A]
   type Observed[A] = Getter[A]
   type Observable[A] = SetterOfSetter[A]
+  trait Iterator[A] extends Getter[A] with GetterOfGetter[A]
+  trait Iterable[A] extends Getter[Iterator[A]]
   trait Subject[A] extends Observable[A] with Observer[A]
+
   trait MutableCell[A] extends Observed[A] with Observer[A] with (Unit / A) {
     override def get(nothing: Unit): A = get()
     override def set(nothing: Unit, x: A): Unit = set(x)
@@ -249,6 +259,14 @@ object Observables {
   def ref[A](x: A) = new MutableCellImpl[A](Some(x))
   def subject[A] = new SubjectImpl[A]
 
+  case class LensLens[A, B](x: A) extends Lens[Lens[A, B], B] {
+    // project B from x
+    override def get(x: Lens[A, B]): B = ???
+
+    // replace B in x with y
+    override def set(x: Lens[A, B], y: B): Lens[A, B] = ???
+  }
+
 
   def Println[A](prefix: String): Setter[A] = new Setter[A] {
     override def set(x: A): Unit = {
@@ -263,7 +281,7 @@ object Observables {
   }
 
   def main(argv: Array[String]): Unit = {
-    def mouseSim: Unit = {
+    def mouseSim {
       case class MouseEvent(val x: Int, val y: Int, val button: Int) {}
 
       val mouseDown = subject[MouseEvent]

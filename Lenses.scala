@@ -35,6 +35,8 @@ trait AbstractSetter[S, B, T] {
   def set(x: S, y: B): T
 }
 
+
+
 // A / 1
 trait Getter[A] extends AbstractGetter[Unit, A] {
   // A / 1 * 1 = A
@@ -49,6 +51,58 @@ trait Setter[A] extends AbstractSetter[Unit, A, Unit] {
   // 1 / A * 1 * A = 1
   override def set(x: Unit, y: A): Unit = set(y)
 }
+
+trait AbstractObservable[A, B, Z] extends AbstractObserver[A, AbstractObserver[Z, B]] {
+  // (A, (A, B)=>A) => A
+  override def set(x: A, y: AbstractObserver[Z, B]): A
+
+  def map[C](f: B=>C): AbstractObservable[A, C, Z] = {
+    val self = this
+    new AbstractObservable[A, C, Z] {
+      override def set(x1: A, y1: AbstractObserver[Z, C]): A = {
+         self.set(x1, new AbstractObserver[Z, B] {
+           override def set(x2: Z, y2: B): Z = {
+              y1.set(x2, f(y2))
+           }
+         })
+      }
+    }
+  }
+
+  def flatmap[C](f: B=>AbstractObservable[A, C, Z]): AbstractObservable[A, C, Z] = {
+    val self = this
+    new AbstractObservable[A, C, Z] {
+      override def set(x1: A, y1: AbstractObserver[Z, C]): A = {
+        self.set(x1, new AbstractObserver[Z, B] {
+          override def set(x2: Z, y2: B): Z = {
+            val inner = f(y2)
+            inner.set(x2, new AbstractObserver[Z, C] {
+              override def set(x3: Z, y3: C): Z = {
+                 y1.set(x3, y3)
+              }
+            })
+          }
+        })
+      }
+    }
+  }
+
+  def fold[C](z: C, f: (C, B)=>C): AbstractObservable[A, C, Z] = {
+    val self = this
+    new AbstractObservable[A, C, Z] {
+      override def set(x1: A, y1: AbstractObserver[Z, C]): A = {
+        self.set(x1, new AbstractObserver[Z, B] {
+          var acc: C = z
+          override def set(x2: Z, y2: B): Z = {
+            acc = f(acc, y2)
+            y1.set(x2, acc)
+          }
+        })
+      }
+    }
+  }
+}
+
 
 trait AbstractLens[S, T, A, B] extends AbstractGetter[S, A] with AbstractSetter[S, B, T] {
   def apply[F[_]](peek: A => F[B], pos: S)(implicit fun: Functor[F]): F[T] = {
@@ -146,10 +200,42 @@ case class LeftLens[A, B]() extends (A / (A + B))  {
   }
 }
 
+trait Golden[F[_], A] extends ISO[F[F[A]], F[A] + A] {
+  def unit(x: A): F[A]
+  def counit(xs: F[A]): A
+  def join(xs:F[F[A]]): F[A]
+  def cojoin(xs: F[A]): F[F[A]]
+  override def fw(x: F[F[A]]): F[A] + A = {
+     val y: F[A] = join(x)
+     val z: A = counit(y)
+     val q: F[A] = unit(z)
+     if (q == y) Right(z) else Left(y)
+  }
 
+  override def bw(y: F[A] + A): F[F[A]] = {
+    y match {
+      case Left(x) => cojoin(x)
+      case Right(y) => cojoin(unit(y))
+    }
+  }
+}
+
+case class PairWithUnit[A]() extends (A, ())
+
+case class G[A] extends Golden[PairWithUnit, A] {
+  override def unit(x: A): PairWithUnit[A] = ()
+
+  override def join(xs: PairWithUnit[PairWithUnit[A]]): PairWithUnit[A] = ???
+
+  override def counit(xs: PairWithUnit[A]): A = ???
+
+  override def cojoin(xs: PairWithUnit[A]): PairWithUnit[PairWithUnit[A]] = ???
+}
 
 
 object Lenses {
+
+  type AbstractObserver[A, B] = AbstractSetter[A, B, A]
 
   type Id[A] = A
   type *[A, B] = (A, B)

@@ -5,13 +5,68 @@ package main.scala.test.lenses
  */
 
 import java.io._
-
 import Prisms._
 
+trait AbstractRaiser[T, A, B] {
+  def raise(x: B): T
+  def success(x: B): A
+}
+
+trait AbstractHandler[S, T, A] {
+  def handle(y: S): A + T
+}
+
+trait CoObservable[E, A] extends AbstractHandler[E, E, AbstractHandler[E, E, A]] {
+  // E -> E + (E -> E + A)
+  override def handle(y: E): AbstractHandler[E, E, A] + E
+  def map[B](f: A=>B): CoObservable[E, B] = {
+    val self = this
+    new CoObservable[E, B] {
+       override def handle(y: E): AbstractHandler[E, E, B] + E = {
+         self.handle(y) match {
+           case Left(h1) => Left(new AbstractHandler[E, E, B] {
+             override def handle(y: E): B + E = {
+                h1.handle(y) match {
+                  case Left(a) => Left(f(a))
+                  case Right(x1) => Right(x1)
+                }
+             }
+           })
+           case Right(x) => Right(x)
+         }
+       }
+     }
+
+    def flatmap[B](f: A=>CoObservable[E, B]): CoObservable[E, B] = {
+      val self = this
+      new CoObservable[E, B] {
+        override def handle(y: E): AbstractHandler[E, E, B] + E = {
+          self.handle(y) match {
+            case Left(h1) => Left(new AbstractHandler[E, E, B] {
+              override def handle(y: E): B + E = {
+                h1.handle(y) match {
+                  case Left(a) => {
+                    val inner = f(a)
+                    inner.handle(y) match {
+                      case Left(h2) => h2.handle(y)
+                      case Right(e) => Right(e)
+                    }
+                  }
+                  case Right(x1) => Right(x1)
+                }
+              }
+            })
+            case Right(x) => Right(x)
+          }
+        }
+      }
+    }
+  }
+}
  
 // Parameter names are as in Kmett. S and T are "exceptions", A and B are "values". Evidently
 // a more concrete prism will have to able to map B to A and S to T
-trait AbstractPrism[S, T, A, B] {
+trait AbstractPrism[S, T, A, B] extends AbstractRaiser[T, A, B] with AbstractHandler[S, T, A] {
   def raise(x: B): T
   def handle(y: S): A + T
   def success(x: B): A
@@ -35,6 +90,7 @@ trait AbstractPrism[S, T, A, B] {
   def tryCatch0[X](f: X => B): (X + S) => (A + T)  = (xs: (X + S)) => doTry((x: X)=>Left(f(x)), xs)
   def tryCatch[X](f: X => B + S): (X + S) => (A + T) = (xs: (X + S)) => doTry(f, xs)
 }
+
 
 // A ~= E + R
 // E - A = -R
