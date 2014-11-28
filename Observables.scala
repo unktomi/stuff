@@ -197,6 +197,8 @@ object Observables {
   type Observer[A] = Setter[A]
   type Observed[A] = Getter[A]
   type Observable[A] = SetterOfSetter[A]
+
+  // ()=>A AND ()=>()=>A
   trait Iterator[A] extends Getter[A] with GetterOfGetter[A]
   trait Iterable[A] extends Getter[Iterator[A]]
   trait Subject[A] extends Observable[A] with Observer[A]
@@ -279,6 +281,8 @@ object Observables {
       xs.set(x)
     }
   }
+
+
 
   def main(argv: Array[String]): Unit = {
     def mouseSim {

@@ -4,8 +4,9 @@ package main.scala.test.lenses
  * Created by christopheroliver on 10/18/14.
  */
 
-import java.io._
+
 import Prisms._
+
 
 trait AbstractRaiser[T, A, B] {
   def raise(x: B): T
@@ -16,54 +17,6 @@ trait AbstractHandler[S, T, A] {
   def handle(y: S): A + T
 }
 
-trait CoObservable[E, A] extends AbstractHandler[E, E, AbstractHandler[E, E, A]] {
-  // E -> E + (E -> E + A)
-  override def handle(y: E): AbstractHandler[E, E, A] + E
-  def map[B](f: A=>B): CoObservable[E, B] = {
-    val self = this
-    new CoObservable[E, B] {
-       override def handle(y: E): AbstractHandler[E, E, B] + E = {
-         self.handle(y) match {
-           case Left(h1) => Left(new AbstractHandler[E, E, B] {
-             override def handle(y: E): B + E = {
-                h1.handle(y) match {
-                  case Left(a) => Left(f(a))
-                  case Right(x1) => Right(x1)
-                }
-             }
-           })
-           case Right(x) => Right(x)
-         }
-       }
-     }
-
-    def flatmap[B](f: A=>CoObservable[E, B]): CoObservable[E, B] = {
-      val self = this
-      new CoObservable[E, B] {
-        override def handle(y: E): AbstractHandler[E, E, B] + E = {
-          self.handle(y) match {
-            case Left(h1) => Left(new AbstractHandler[E, E, B] {
-              override def handle(y: E): B + E = {
-                h1.handle(y) match {
-                  case Left(a) => {
-                    val inner = f(a)
-                    inner.handle(y) match {
-                      case Left(h2) => h2.handle(y)
-                      case Right(e) => Right(e)
-                    }
-                  }
-                  case Right(x1) => Right(x1)
-                }
-              }
-            })
-            case Right(x) => Right(x)
-          }
-        }
-      }
-    }
-  }
-}
- 
 // Parameter names are as in Kmett. S and T are "exceptions", A and B are "values". Evidently
 // a more concrete prism will have to able to map B to A and S to T
 trait AbstractPrism[S, T, A, B] extends AbstractRaiser[T, A, B] with AbstractHandler[S, T, A] {
@@ -177,74 +130,50 @@ case class Zero[A]() extends (A - A) {
   }
 }
 
-// Evidence A is isomorphic to E + R
-trait PrismISO[A, E, R] extends ISO[A, (E + R)] {
-  def raise(y: E + R): A = bw(y)
-  def handle(x: A): E + R = fw(x)
+// Evidence E is isomorphic to A + R
+trait PrismISO[E, A, R] extends ISO[E, (A + R)] {
+  def raise(y: A + R): E = bw(y)
+  def handle(x: E): A + R = fw(x)
 }
 
-// X - 1 = X + 1 - 2
+
+// X + 1 - 2  = X - 1
 case class MaybeNot[X](except: X) extends (Option[X] - Boolean) {
-  // throw = dual of Lens.get
+
+
   override def raise(x: Boolean): Option[X] = if (x) Some(except) else None
 
   // inject A into E
   override def handle(y: Option[X]): Boolean + Option[X] = {
     y match {
+      case Some(x) => if (y == except) Left(true) else Right(y)
       case None => Left(false)
-      case Some(v) => Right(y)
     }
   }
 }
 
-case class Never[X]() extends (Option[X] - Boolean) {
-
-  override def raise(x: Boolean): Option[X] = None
-
-  // inject A into E
-  override def handle(y: Option[X]): Boolean + Option[X] = {
-    Left(false)
-  }
-}
-
-case class Throw[X](exception: X) extends (X - Unit) {
+// X - 1
+case class Except[X](exception: X) extends (X - Unit) {
   // throw = dual of Lens.get
   override def raise(x: Unit): X = exception
 
   // inject A into E
-  override def handle(y: X): Unit + X = if (y != exception) Left(()) else Right(y)
+  override def handle(y: X): Unit + X = if (y == exception) Left(()) else Right(y)
 
 }
 
-// File = File x InputStream + File x IOException
-class FileISO extends PrismISO[File, (File, InputStream), (File, IOException)] {
-  override def fw(x: File): +[(File, InputStream), (File, IOException)] = {
-    try {
-      Left((x, new FileInputStream(x)))
-    } catch {
-      case ex: IOException => Right((x, ex))
-    }
-  }
+// A - B
+case class Subtype[A, B <: A]() extends (A - B) {
+  // throw = dual of Lens.get
+  override def raise(x: B): A = x
 
-  override def bw(y: +[(File, InputStream), (File, IOException)]): File = {
+  // inject A into E
+  override def handle(y: A): B + A = {
     y match {
-      case Left(xs) => xs._1
-      case Right(xs) => xs._1
+      case (x: B) => Left(x)
+      case _ => Right(y)
     }
   }
-}
-
-// File / File = (File x (InputStream + IOException)) / File
-// Unit = InputStream + IOException
-class OpenFile(x: File) extends PrismISO[Unit, InputStream, IOException] {
-  override def fw(u: Unit): InputStream + IOException = {
-    try {
-      Left(new FileInputStream(x))
-    } catch {
-      case ex: IOException => Right(ex)
-    }
-  }
-  override def bw(y: +[InputStream, IOException]): Unit = ()
 }
 
 object Prisms {
@@ -324,38 +253,11 @@ object Prisms {
     println(p.toLens.set(200, Left(1000)))
 
     val notTen = MaybeNot[Int](10)
-    println("Laws notTen: " +laws(notTen, true))
+    println("Laws notTen: " + laws(notTen, true))
     println(notTen.raise(true))
     println(notTen.raise(false))
     println(notTen.handle(notTen.raise(true)))
     println(notTen.handle(None))
-
-
-    // X^2 + 2x + 1 = (x + 1) * (x + 1)
-    def doit[X](xs: (X, X) + (X + X) + Unit): (X + Unit, X + Unit) = {
-      xs match {
-        case Left(p) => p match {
-          case Left(xs) => (Left(xs._1), Left(xs._2))
-          case Right(xx) => xx match {
-            case Left(x1) => (Left(x1), Right(()))
-            case Right(x2) => (Right(()), Left(x2))
-          }
-        }
-        case Right(u) => (Right(()), (Right(())))
-      }
-    }
-
-    // (X - 1) * (X - 1) = X2 -2x + 1 = x (x - 2) + 1  =
-    def doit2[X](xs: (X, X - Boolean) + Unit): (Option[X] - Boolean, Option[X] - Boolean) = {
-      xs match {
-        case Left(xs) => val y: Boolean + X  = xs._2.handle(xs._1); y match {
-          case Left(b) =>  val x = xs._2.raise(b); if (b) (MaybeNot(x), Never[X]) else (Never[X], MaybeNot(x))
-          case Right(x) => (MaybeNot(x), MaybeNot(x))
-        }
-        //case Left(e) => e.(MaybeNot[X], MaybeNot[X])
-        case Right(u) => (Never[X], Never[X])
-      }
-    }
-  } 
+  }
 }
 

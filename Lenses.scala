@@ -35,8 +35,6 @@ trait AbstractSetter[S, B, T] {
   def set(x: S, y: B): T
 }
 
-
-
 // A / 1
 trait Getter[A] extends AbstractGetter[Unit, A] {
   // A / 1 * 1 = A
@@ -51,7 +49,7 @@ trait Setter[A] extends AbstractSetter[Unit, A, Unit] {
   // 1 / A * 1 * A = 1
   override def set(x: Unit, y: A): Unit = set(y)
 }
-
+/*
 trait AbstractObservable[A, B, Z] extends AbstractObserver[A, AbstractObserver[Z, B]] {
   // (A, (A, B)=>A) => A
   override def set(x: A, y: AbstractObserver[Z, B]): A
@@ -76,7 +74,7 @@ trait AbstractObservable[A, B, Z] extends AbstractObserver[A, AbstractObserver[Z
         self.set(x1, new AbstractObserver[Z, B] {
           override def set(x2: Z, y2: B): Z = {
             val inner = f(y2)
-            inner.set(x2, new AbstractObserver[Z, C] {
+            inner.set(x1, new AbstractObserver[Z, C] {
               override def set(x3: Z, y3: C): Z = {
                  y1.set(x3, y3)
               }
@@ -102,11 +100,10 @@ trait AbstractObservable[A, B, Z] extends AbstractObserver[A, AbstractObserver[Z
     }
   }
 }
-
-
+*/
 trait AbstractLens[S, T, A, B] extends AbstractGetter[S, A] with AbstractSetter[S, B, T] {
-  def apply[F[_]](peek: A => F[B], pos: S)(implicit fun: Functor[F]): F[T] = {
-    fun.map(peek(get(pos)), (x: B) => set(pos, x))
+  def apply[F[_]](unit: A => F[B])(implicit fun: Functor[F]): S => F[T] = {
+    (pos: S) => fun.map(unit(get(pos)), (x: B) => set(pos, x))
   }
   // project A from x
   def get(x: S): A
@@ -220,17 +217,7 @@ trait Golden[F[_], A] extends ISO[F[F[A]], F[A] + A] {
   }
 }
 
-case class PairWithUnit[A]() extends (A, ())
 
-case class G[A] extends Golden[PairWithUnit, A] {
-  override def unit(x: A): PairWithUnit[A] = ()
-
-  override def join(xs: PairWithUnit[PairWithUnit[A]]): PairWithUnit[A] = ???
-
-  override def counit(xs: PairWithUnit[A]): A = ???
-
-  override def cojoin(xs: PairWithUnit[A]): PairWithUnit[PairWithUnit[A]] = ???
-}
 
 
 object Lenses {
@@ -244,7 +231,7 @@ object Lenses {
   // A / A = 1
   def one[A]: (A / A) = One[A]
 
-  // 1 / A
+  // A / 1
   def just[A] = new (A / Unit) {
     // project Unit from A
     override def get(x: A): Unit = ()
@@ -252,13 +239,13 @@ object Lenses {
     override def set(x: A, nothing: Unit): A = x
   }
 
-  // A / (A * B) = 1 / B
+  // (A * B) / A = B
   def former[A, B]: (A, B) / A  = new ((A, B) / A) {
     def get(xs: (A, B)): A = xs._1
     def set(xs: (A, B), y: A): (A, B) = (y, xs._2)
   }
 
-  // B / (A * B) = 1 / A
+  // (A * B) / B  = A
   def latter[A, B]: (A, B) / B  = new ((A, B) / B) {
     def get(xs: (A, B)): B = xs._2
     def set(xs: (A, B), y: B): (A, B) = (xs._1, y)
@@ -300,4 +287,18 @@ object Lenses {
     println("LENS LAWS a " + laws(z1, a, 20))
     println(z1.get(a))
   }
+
+  // A AND B IMPLIES C = (A IMPLIES B) IMPLIES C
+  def curry[A, B, C](f: (A, B)=>C): A=>(B=>C) = {
+    (x: A) => {
+      (y: B) => f(x, y)
+    }
+  }
+
+  def uncurry[A, B, C](f: A=>(B=>C)): (A, B)=>C = {
+    (x: A, y: B) => {
+      f(x)(y)
+    }
+  }
+
 }
