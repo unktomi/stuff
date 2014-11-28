@@ -22,7 +22,6 @@ trait LazilyImplies[A, B] extends (NOT[A] OR B) {
   }
 }
 
-
 // A IMPLIES B = NOT (A AND NOT B)
 trait StrictlyImplies[A, B] extends NOT[A AND NOT[B]] {
   def *[C](xs: StrictlyImplies[B, C]): StrictlyImplies[A, C] = compose(xs)
@@ -59,8 +58,13 @@ object Evaluation {
     (k)=>k(y)
   }
 
+
   def curry[A, B, C](f: (A, B)=>C): A=>(B=>C) = {
     (x: A) => (y: B)=> f(x, y)
+  }
+
+  def uncurry[A, B, C](f: A=>(B=>C)): (A, B)=>C = {
+    (x: A, y: B)=> f(x)(y)
   }
 
   def cocurry[A <: Exception, B, C] (f: C => A + B): (C - B) => A = {
@@ -69,6 +73,58 @@ object Evaluation {
         x.apply((x:C, k: NOT[B])=> f(x).apply((v1: A)=> throw v1, (v2: B)=> k(v2)))
       } catch {
         case r: A => r
+      }
+    }
+  }
+
+  def uncocurry[A <: Exception, B, C](k: (C - B) => A): C => (A + B) = {
+     new (C => A + B) {
+       override def apply(x: C): A + B = {
+         new (A + B) {
+           override def apply(v1: (A) => Nothing, v2: (B) => Nothing): Nothing = {
+             val a = k.apply(new (C - B) {
+               override def apply(k: (C, NOT[B]) => Nothing): Nothing = {
+                 k(x, v2)
+               }
+             })
+             v1(a)
+           }
+         }
+       }
+     }
+  }
+
+  def dist[A, B, C](xs: A AND (B OR C)): (A AND B) OR (A AND C) = {
+    new ((A AND B) OR (A AND C)) {
+      override def apply(v1: (A AND B) => Nothing, v2: (A AND C) => Nothing): Nothing = {
+        xs.apply((x: A, y: B OR C)=>
+          y.apply((b: B)=> v1.apply(new (A AND B) {
+            override def apply(k: (A, B) => Nothing): Nothing = {
+              k(x, b)
+            }
+          }),
+            (c)=> v2.apply(new (A AND C) {
+              override def apply(k: (A, C) => Nothing): Nothing = {
+                k(x, c)
+              }
+            })))
+      }
+    }
+  }
+
+  def codist[A, B, C](xs: A OR (B AND C)): (A OR B) AND (A OR C) = {
+    new ((A OR B) AND (A OR C)) {
+      override def apply(f: (A OR B, A OR C) => Nothing): Nothing = {
+         f(new (A OR B) {
+           override def apply(k1: (A) => Nothing, k2: (B) => Nothing): Nothing = {
+             xs.apply(k1, (bc: B AND C)=> bc.apply((b, c)=> k2(b)))
+           }
+         },
+         new (A OR C) {
+           override def apply(k1: (A) => Nothing, k2: (C) => Nothing): Nothing = {
+             xs.apply(k1, (bc: B AND C)=> bc.apply((b, c)=> k2(c)))
+           }
+         })
       }
     }
   }
@@ -86,6 +142,7 @@ object Evaluation {
   }
   def t {
     val k = cocurry(openFile(_:File))
+    val i = uncocurry(k)
     val e = k.apply(new (File - FileInputStream) {
       override def apply(v1: (File, NOT[FileInputStream]) => Nothing): Nothing = {
           v1(new File("."), new NOT[FileInputStream] {
@@ -97,6 +154,14 @@ object Evaluation {
       }
     })
     println(e)
+    val j = i.apply(new File("."))
+    j.apply((ex)=>{
+      println(ex)
+      sys.exit()
+    }, (strm)=> {
+      println(strm)
+      sys.exit()
+    })
   }
 
   def apply[A, B, C](f: B => C, x: B) = f(x)
@@ -113,14 +178,45 @@ object Evaluation {
     }
   }
 
-  type +[A, B] = OR[A, B]
-  type -[A, B] = A AND NOT[B]
+  def lazyCoapply[B, C](x: C): (C WITHOUT B) OR B = {
+    new ((C WITHOUT B) + B) {
+      override def apply(k1: (C WITHOUT B) => Nothing, k2: (B) => Nothing): Nothing = {
+        k1(new (C WITHOUT B) {
+          override def apply(k3: NOT[C] OR B): Nothing = {
+             k3.apply((k1: NOT[C])=> k1.apply(x), k2)
+          }
+        })
+      }
+    }
+  }
+
+  def lazyCocurry[A <: Exception, B, C] (f: C => A OR B): (C WITHOUT B) => A = {
+    (x: C WITHOUT B) => {
+      try {
+        x.apply(new (NOT[C] OR B) {
+          override def apply(k1: (NOT[C]) => Nothing, k2: (B) => Nothing): Nothing = {
+            k1(new NOT[C] {
+              override def apply(v1: C): Nothing = {
+                f(v1).apply((x: A) => throw x, k2)
+              }
+            })
+          }
+        })
+      } catch {
+        case r: A => r
+      }
+    }
+  }
 
   type NOT[A] = A => Nothing
   type OR[A, B] = (A => Nothing, B => Nothing) => Nothing
   type AND[A, B] = ((A, B) => Nothing) => Nothing
   type Zero[A] = Nothing => A
   type One[A] = A => Unit
+  type +[A, B] = A OR B
+  type -[A, B] = A AND NOT[B]
+
+  type WITHOUT[A, B] = NOT[NOT[A] OR B]
 
   def lazily[A, B](f: A=>B) = new LazilyImplies[A, B] {
     override def apply(k1: (NOT[A]) => Nothing, k2: (B) => Nothing): Nothing = {
