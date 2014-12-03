@@ -6,9 +6,6 @@ package evaluation
 import java.io.{File, IOException, FileInputStream}
 
 import Evaluation._
-
-
-import scala.collection.mutable
 import scala.collection.mutable.ListBuffer
 
 trait ISO[A, B] {
@@ -207,30 +204,6 @@ object Evaluation {
       }
     }
   }
-  /*
-  trait Future[A, Exception] extends (A OR Exception) {
-    override def apply(v1: (A) => Nothing, v2: (Exception) => Nothing): Nothing
-    def map[B](f: A=>B): Future[B, Exception] = {
-      val self = this
-      new Future[B, Exception] {
-        override def apply(v1: (B) => Nothing, v2: (Exception) => Nothing): Nothing = {
-           self.apply((x:A)=>v1(f(x)), (y:Exception)=>v2(y))
-        }
-      }
-    }
-    def lazymap[B](f: A~>B): Future[B, Exception] = {
-      val self = this
-      new Future[B, Exception] {
-        override def apply(v1: (B) => Nothing, v2: (Exception) => Nothing): Nothing = {
-          self.apply((x:A)=>f.apply((k: NOT[A])=>k(x),
-            (v:B)=>v1(v)), (y:Exception)=>v2(y))
-        }
-      }
-    }
-  }
-
-  */
-
 
   def now[A](x: A): Eventually[A] = new Eventually[A] {
     override def apply(v1: (A) => Nothing, v2: (Eventually[A]) => Nothing): Nothing = {

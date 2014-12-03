@@ -86,7 +86,7 @@ trait AbstractLens[S, T, A, B] extends AbstractGetter[S, A] with AbstractSetter[
 
 trait MutableCell[A] extends (Unit / A) with Getter[A] with Setter[A]
 
-// A = (B, R)
+// A ~= (B, R)
 // R = A / B
 
 trait Lens[A, B] extends AbstractLens[A, A, B, B] {
