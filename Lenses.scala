@@ -10,8 +10,6 @@ import Lenses._
 import scala.collection.mutable
 
 
-//import Prisms._
-
 trait Functor[F[_]] {
   def map[A, B](xs: F[A], f: A=>B): F[B]
 }
@@ -38,9 +36,8 @@ trait AbstractSetter[S, B, T] {
   def set(x: S, y: B): T
 }
 
-// A / 1
+// 1 / A
 trait Getter[A] extends AbstractGetter[Unit, A] {
-  // A / 1 * 1 = A
 
   override def get(nothing: Unit): A = get()
   def get(): A
@@ -67,9 +64,9 @@ trait Getter[A] extends AbstractGetter[Unit, A] {
 
 // 1 / A
 trait Setter[A] extends AbstractSetter[Unit, A, Unit] {
-  // 1 / A * A = 1
+
   def set(x: A): Unit
-  // 1 / A * 1 * A = 1
+
   override def set(x: Unit, y: A): Unit = set(y)
 }
 
@@ -151,7 +148,6 @@ case class One[A]() extends (A / A) {
 }
 
 // Evidence A is isomorphic to (B * R)
-// B / A = 1 / R
 trait ISOLens[A, B, R] extends ISO[A, (B, R)] with (A / B) {
   def get(x: A): B = this.fw(x)._1
   def set(x: A, y: B): A = {
@@ -161,16 +157,6 @@ trait ISOLens[A, B, R] extends ISO[A, (B, R)] with (A / B) {
 
 }
 
-case class LeftLens[A, B]() extends (A / (A + B))  {
-  // project B from x
-  override def get(x: A): +[A, B] = Left(x)
-
-  // replace B in x with y
-  override def set(x: A, y: +[A, B]): A = y match {
-    case Left(a) => a
-    case Right(b) => x
-  }
-}
 
 object Lenses {
 
@@ -460,7 +446,6 @@ object Lenses {
   }
 
   def nop[A] = new Observable[A] {
-    // 1 / A * A = 1
     override def set(nothing: Unit, x: Observer[A]): Unit = {}
   }
 
@@ -483,14 +468,15 @@ object Lenses {
     val z1 = idx * end * x
     println("LENS LAWS a " + laws(z1, a, 20))
     println(z1.get(a))
+
     def Println[A](prefix: String): Observer[A] = new Observer[A] {
       override def raise(x: A): Unit = {
         println(prefix + x)
       }
-
       // inject A into E
-      override def handle(y: Unit): Prisms.+[A, Unit] = Right(())
+      override def handle(y: Unit): A + Unit = Right(())
     }
+
     def mouseSim {
       case class MouseEvent(val x: Int, val y: Int, val button: Int) {}
 
