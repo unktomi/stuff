@@ -7,6 +7,7 @@ package main.scala.test.lenses
 import Lenses._
 
 
+
 import scala.collection.mutable
 
 
@@ -395,27 +396,37 @@ object Lenses {
 
     val subscribers = new mutable.WeakHashMap[(Unit - A), Unit]
 
-    var last: Option[A] = None
+    val u = new (Unit - A) {
+      var last: Option[A] = None
+      // throw = dual of Lens.get
+      override def raise(x: A): Unit = {
+        last = Some(x)
+        for (j <- subscribers.keySet) j.raise(x)
+      }
+
+      // inject A into E
+      override def handle(y: Unit): A + Unit = {
+        last match {
+          case Some(x) => Left(x)
+          case None => Right(())
+        }
+      }
+      // hacks needed to satisfy lens laws
+      override def equals(obj: scala.Any): Boolean = {
+        if (super.equals(obj)) return true
+        obj match {
+          case u: (Unit - A) => subscribers.keySet.contains(u)
+        }
+        return false
+      }
+    }
 
     override def get(x: Unit): Unit - A = {
-       new (Unit - A) {
-         // throw = dual of Lens.get
-         override def raise(x: A): Unit = {
-           last = Some(x)
-           for (j <- subscribers.keySet) j.raise(x)
-         }
-
-         // inject A into E
-         override def handle(y: Unit): A + Unit = {
-             last match {
-               case Some(x) => Left(x)
-               case None => Right(())
-             }
-         }
-       }
+       u
     }
 
     override def set(x: Unit, y: Unit - A): Unit = {
+      if (u == y) return ()
       subscribers.put(y, ())
       val xs = roots.get(y)
       xs match {
@@ -485,6 +496,9 @@ object Lenses {
       val mouseMove = subject[MouseEvent]
       val mouseLeave = subject[MouseEvent]
       val mouseEnter = subject[MouseEvent]
+
+      println("MOUSE ENTER: "+laws(mouseEnter, (), mouseEnter.get()))
+      Prisms.laws(mouseEnter.get(), new MouseEvent(1, 1, 1))
 
       val mouseDrag = (mouseDown followedBy mouseMove) takeUntil mouseUp
 

@@ -316,6 +316,7 @@ object Prisms {
 
   def laws[A, E](p: (E - A), v: A): Boolean = {
     val x: E = p.raise(v)
+    println(v + " raise => "+x)
     p.handle(x) match {
       case Left(a) => println("Left "+a + " == " + v); a == v
       case Right(e) => println("Right "+ e + " == " + x); e == x
