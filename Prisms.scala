@@ -67,8 +67,8 @@ case class Right[A, B](val y: B) extends Either[A, B] {
 */
 
 
-// A ~= E + R
-// E - A = -R
+// E ~= A + R
+// E - A = R
 trait Prism[E, A] extends AbstractPrism[E, E, A, A] {
   type This = (E - A)
   // throw = dual of Lens.get
@@ -100,20 +100,6 @@ trait Prism[E, A] extends AbstractPrism[E, E, A, A] {
     }
   }
 
-  def swap: (A - E) = {
-    val self = this
-    new (A - E) {
-      var store: Option[A] = None
-      // throw = dual of Lens.get
-      override def raise(x: E): A = store.get
-      // E - (A - R) =  A
-      override def handle(y: A): E + A = {
-        store = Some(y)
-        Right(y)
-      }
-    }
-  }
-
   def toState: A=>(E, A) = {
     (x: A) => {
       (raise(x), x)
@@ -139,17 +125,6 @@ case class Zero[A]() extends (A - A) {
   // catch = Left
   override def handle(y: A): (A + A) = Left(y)
 
-  // -0
-  override def swap(): Prism[A, A] = {
-    val self = this
-    new Prism[A, A] {
-      // throw = id
-      override def raise(x: A): A = x
-      // catch = Right
-      override def handle(y: A): (A + A) = Right(y)
-      override def swap(): Prism[A, A] = self
-    }
-  }
 }
 
 // Evidence E is isomorphic to A + R

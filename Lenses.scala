@@ -93,6 +93,7 @@ trait MutableCell[A] extends (Unit / A) with Getter[A] with Setter[A]
 // R = A / B
 
 trait Lens[A, B] extends AbstractLens[A, A, B, B] {
+
   type This = A / B
 
   // project B from x
