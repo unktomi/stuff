@@ -1,23 +1,47 @@
 package main.scala.test.lenses
 
+import main.scala.test.lenses.Prisms
+
 import scala.collection.mutable
-import Observables._
 import Lenses._
+import Observables._
+import Observables.{Observable, Observed, Observer, nop, gc}
 
 
 // type GetterOfGetter[A] = Getter[Getter[A]]
 trait GetterOfGetter[A] {
-  def getGetter: Getter[A]
+  def getGetter: Option[Getter[A]]
 }
+
+trait ObserverSetter1[A] extends (Prism[Unit, A]) {
+  var last: Option[A] = None
+  def set(x: A): Unit
+  // throw = dual of Lens.get
+  override def raise(x: A): Unit = {
+    last = Some(x)
+    set(x)
+  }
+
+  // inject A into E
+  override def handle(y: Unit): A + Unit = {
+    last match {
+      case None => Right(())
+      case Some(x) => Left(x)
+    }
+  }
+}
+
 
 // type SetterOfSetter[A] = Setter[Setter[A]]
 trait SetterOfSetter[A] {
+
+  type ObserverSetter[A] = Setter[A]
 
   override def finalize(): Unit = {
     println("Finalize: "+this)
   }
 
-  def setSetter(xs: Setter[A]): Unit
+  def setSetter(xs: ObserverSetter[A]): Unit
 
   // Scala for-comprehension hooks
 
@@ -25,8 +49,8 @@ trait SetterOfSetter[A] {
   def map[B](f: A=>B): SetterOfSetter[B] = {
     val xs = this
     new SetterOfSetter[B] {
-      def setSetter(ys: Setter[B]): Unit = {
-        xs.setSetter(new Setter[A] {
+      def setSetter(ys: ObserverSetter[B]): Unit = {
+        xs.setSetter(new ObserverSetter[A] {
           def set(x: A): Unit = {
             ys.set(f(x))
           }
@@ -39,8 +63,8 @@ trait SetterOfSetter[A] {
   def flatMap[B](f: A=>SetterOfSetter[B]): SetterOfSetter[B] = {
     val outer: SetterOfSetter[A] = this
     new SetterOfSetter[B] {
-      def setSetter(xs: Setter[B]): Unit = {
-        outer.setSetter(new Setter[A] {
+      def setSetter(xs: ObserverSetter[B]): Unit = {
+        outer.setSetter(new ObserverSetter[A] {
           def set(x: A): Unit = {
             val inner: SetterOfSetter[B] = f(x)
             inner.setSetter(xs)
@@ -67,8 +91,8 @@ trait SetterOfSetter[A] {
   def fold[B](z: B, f: (B, A)=>B): Observable[B] = {
     val self = this
     new Observable[B] {
-      def setSetter(xs: Setter[B]): Unit = {
-        self.setSetter(new Setter[A] {
+      def setSetter(xs: ObserverSetter[B]): Unit = {
+        self.setSetter(new ObserverSetter[A] {
           var acc: B = z
           def set(x: A): Unit = {
             acc = f(acc, x)
@@ -85,8 +109,8 @@ trait SetterOfSetter[A] {
   def takeAndThen(n: Int, andThen: SetterOfSetter[A]): SetterOfSetter[A] = {
     val self = this
     new SetterOfSetter[A] {
-      override def setSetter(xs: Setter[A]): Unit = {
-        self.setSetter(new Setter[A] {
+      override def setSetter(xs: ObserverSetter[A]): Unit = {
+        self.setSetter(new ObserverSetter[A] {
           var taken = 0
           override def set(x: A): Unit = {
             taken = taken + 1
@@ -107,7 +131,7 @@ trait SetterOfSetter[A] {
   def merge(other: SetterOfSetter[A]): SetterOfSetter[A] = {
     val self = this
     new SetterOfSetter[A] {
-      def setSetter(xs: Setter[A]): Unit = {
+      def setSetter(xs: ObserverSetter[A]): Unit = {
         self.setSetter(xs)
         other.setSetter(xs)
       }
@@ -117,14 +141,14 @@ trait SetterOfSetter[A] {
   def takeUntil[B](signal: SetterOfSetter[B], andThen: SetterOfSetter[A] = nop): SetterOfSetter[A] = {
     val self = this
     new SetterOfSetter[A] {
-      def setSetter(xs: Setter[A]): Unit = {
+      def setSetter(xs: ObserverSetter[A]): Unit = {
         var done = false
         var switched = false
-        val test = new Setter[B] {
+        val test = new ObserverSetter[B] {
           def set(x: B): Unit = done = true
         }
         signal.setSetter(test)
-        self.setSetter(new Setter[A] {
+        self.setSetter(new ObserverSetter[A] {
           var taken = 0
           override def set(x: A): Unit = {
             if (!done) {
@@ -147,8 +171,8 @@ trait SetterOfSetter[A] {
   def filter(p: A=>Boolean): Observable[A] = {
     val self = this
     new Observable[A] {
-      override def setSetter(xs: Setter[A]): Unit = {
-        self.setSetter(new Setter[A] {
+      override def setSetter(xs: ObserverSetter[A]): Unit = {
+        self.setSetter(new ObserverSetter[A] {
           override def set(x: A): Unit = {
             if (p(x)) xs.set(x)
           }
@@ -160,8 +184,8 @@ trait SetterOfSetter[A] {
   def repeat(n: Int): Observable[A] = {
     val self = this
     new Observable[A] {
-      override def setSetter(xs: Setter[A]): Unit = {
-        self.setSetter(new Setter[A] {
+      override def setSetter(xs: ObserverSetter[A]): Unit = {
+        self.setSetter(new ObserverSetter[A] {
           override def set(x: A): Unit = {
             for { i <- 0 until n } xs.set(x)
           }
@@ -191,27 +215,55 @@ object Observables {
   }
 
   def nop[A] = new SetterOfSetter[A] {
-    def setSetter(xs: Setter[A]): Unit = {}
+    def setSetter(xs: ObserverSetter[A]): Unit = {}
   }
 
   type Observer[A] = Setter[A]
   type Observed[A] = Getter[A]
   type Observable[A] = SetterOfSetter[A]
 
-  // ()=>A AND ()=>()=>A
-  trait Iterator[A] extends Getter[A] with GetterOfGetter[A]
+  // Iterator[A] = Getter[A] x Getter[Option[Iterator[A]]
+  trait Iterator[A] extends Getter[A] {
+    def getNext(): Option[Iterator[A]]
+  }
+
   trait Iterable[A] extends Getter[Iterator[A]]
+  // () => A + () => () => A
+  // (A=>())=>() x A=>()
   trait Subject[A] extends Observable[A] with Observer[A]
 
-  trait MutableCell[A] extends Observed[A] with Observer[A] with (Unit / A) {
+  trait ReactiveCell[A] extends Observed[A]   {
+
+    def toObservable: Observable[A]
+
+    override def map[B](f: (A) => B): ReactiveCell[B] = {
+       val self = this
+       new ReactiveCell[B] {
+         override def toObservable: Observable[B] = self.toObservable.map(f)
+         override def get(): B = f(self.get())
+       }
+    }
+
+    def flatMap[B](f: (A) => ReactiveCell[B]): ReactiveCell[B] = {
+      val self = this
+      new ReactiveCell[B] {
+        override def toObservable: Observable[B] = self.toObservable.map((x: A)=> {
+          f(x).get()
+        })
+        override def get(): B = f(self.get()).get()
+      }
+    }
+  }
+
+  trait MutableCell[A] extends ReactiveCell[A] with Observer[A] with (Unit / A) {
     override def get(nothing: Unit): A = get()
     override def set(nothing: Unit, x: A): Unit = set(x)
   }
 
   // (A=>())=>() AND A=>()
   class SubjectImpl[A] extends Subject[A] {
-    private val subscribers = new mutable.WeakHashMap[Setter[A], Unit]
-    def setSetter(x: Setter[A]): Unit = {
+    private val subscribers = new mutable.WeakHashMap[ObserverSetter[A], Unit]
+    def setSetter(x: ObserverSetter[A]): Unit = {
       subscribers.put(x, ())
       val xs = roots.get(x)
       xs match {
@@ -257,8 +309,8 @@ object Observables {
     }
   }
 
-  def ref[A] = new MutableCellImpl[A](None)
-  def ref[A](x: A) = new MutableCellImpl[A](Some(x))
+  def ref[A]: MutableCell[A] = new MutableCellImpl[A](None)
+  def ref[A](x: A): MutableCell[A] = new MutableCellImpl[A](Some(x))
   def subject[A] = new SubjectImpl[A]
 
   case class LensLens[A, B](x: A) extends Lens[Lens[A, B], B] {
@@ -277,14 +329,13 @@ object Observables {
   }
 
   def observe[A](x: A): SetterOfSetter[A] = new SetterOfSetter[A] {
-    def setSetter(xs: Setter[A]): Unit = {
+    def setSetter(xs: ObserverSetter[A]): Unit = {
       xs.set(x)
     }
   }
 
-
-
   def main(argv: Array[String]): Unit = {
+
     def mouseSim {
       case class MouseEvent(val x: Int, val y: Int, val button: Int) {}
 
@@ -341,6 +392,22 @@ object Observables {
       disarm = null
       trig = null
       for { i <- 0 to 10 } System.gc()
+
+      val x = ref[Int](1)
+      val y = ref[Int](2)
+      val z = for { i <- x
+                    j <- y
+              } yield i + j
+      println("z="+z.get())
+      val onZ = new Setter[Int] {
+        // 1 / A * A = 1
+        override def set(x: Int): Unit = {
+          println("set z="+x)
+        }
+      }
+      z.toObservable.setSetter(onZ)
+      x.set(300)
+      println("z="+z.get())
     }
 
     mouseSim

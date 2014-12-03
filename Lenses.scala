@@ -5,7 +5,10 @@ package main.scala.test.lenses
  */
 
 import Lenses._
-import Prisms._
+
+
+import scala.collection.mutable
+
 
 //import Prisms._
 
@@ -38,8 +41,28 @@ trait AbstractSetter[S, B, T] {
 // A / 1
 trait Getter[A] extends AbstractGetter[Unit, A] {
   // A / 1 * 1 = A
+
   override def get(nothing: Unit): A = get()
   def get(): A
+  def map[B](f: A=>B): Getter[B] = {
+      val self = this
+      new Getter[B] {
+        override def get(): B = {
+           f(self.get())
+        }
+      }
+  }
+  /*
+  def flatMap[B](f: A=>Getter[B]): Getter[B] = {
+    val self = this
+    new Getter[B] {
+      override def get(): B = {
+        f(self.get()).get()
+      }
+    }
+  }
+  */
+
 }
 
 // 1 / A
@@ -49,58 +72,7 @@ trait Setter[A] extends AbstractSetter[Unit, A, Unit] {
   // 1 / A * 1 * A = 1
   override def set(x: Unit, y: A): Unit = set(y)
 }
-/*
-trait AbstractObservable[A, B, Z] extends AbstractObserver[A, AbstractObserver[Z, B]] {
-  // (A, (A, B)=>A) => A
-  override def set(x: A, y: AbstractObserver[Z, B]): A
 
-  def map[C](f: B=>C): AbstractObservable[A, C, Z] = {
-    val self = this
-    new AbstractObservable[A, C, Z] {
-      override def set(x1: A, y1: AbstractObserver[Z, C]): A = {
-         self.set(x1, new AbstractObserver[Z, B] {
-           override def set(x2: Z, y2: B): Z = {
-              y1.set(x2, f(y2))
-           }
-         })
-      }
-    }
-  }
-
-  def flatmap[C](f: B=>AbstractObservable[A, C, Z]): AbstractObservable[A, C, Z] = {
-    val self = this
-    new AbstractObservable[A, C, Z] {
-      override def set(x1: A, y1: AbstractObserver[Z, C]): A = {
-        self.set(x1, new AbstractObserver[Z, B] {
-          override def set(x2: Z, y2: B): Z = {
-            val inner = f(y2)
-            inner.set(x1, new AbstractObserver[Z, C] {
-              override def set(x3: Z, y3: C): Z = {
-                 y1.set(x3, y3)
-              }
-            })
-          }
-        })
-      }
-    }
-  }
-
-  def fold[C](z: C, f: (C, B)=>C): AbstractObservable[A, C, Z] = {
-    val self = this
-    new AbstractObservable[A, C, Z] {
-      override def set(x1: A, y1: AbstractObserver[Z, C]): A = {
-        self.set(x1, new AbstractObserver[Z, B] {
-          var acc: C = z
-          override def set(x2: Z, y2: B): Z = {
-            acc = f(acc, y2)
-            y1.set(x2, acc)
-          }
-        })
-      }
-    }
-  }
-}
-*/
 trait AbstractLens[S, T, A, B] extends AbstractGetter[S, A] with AbstractSetter[S, B, T] {
   def apply[F[_]](unit: A => F[B])(implicit fun: Functor[F]): S => F[T] = {
     (pos: S) => fun.map(unit(get(pos)), (x: B) => set(pos, x))
@@ -117,7 +89,9 @@ trait AbstractLens[S, T, A, B] extends AbstractGetter[S, A] with AbstractSetter[
 
 trait MutableCell[A] extends (Unit / A) with Getter[A] with Setter[A]
 
-// (A / B)
+// A = (B, R)
+// R = A / B
+
 trait Lens[A, B] extends AbstractLens[A, A, B, B] {
   type This = A / B
 
@@ -197,36 +171,12 @@ case class LeftLens[A, B]() extends (A / (A + B))  {
   }
 }
 
-trait Golden[F[_], A] extends ISO[F[F[A]], F[A] + A] {
-  def unit(x: A): F[A]
-  def counit(xs: F[A]): A
-  def join(xs:F[F[A]]): F[A]
-  def cojoin(xs: F[A]): F[F[A]]
-  override def fw(x: F[F[A]]): F[A] + A = {
-     val y: F[A] = join(x)
-     val z: A = counit(y)
-     val q: F[A] = unit(z)
-     if (q == y) Right(z) else Left(y)
-  }
-
-  override def bw(y: F[A] + A): F[F[A]] = {
-    y match {
-      case Left(x) => cojoin(x)
-      case Right(y) => cojoin(unit(y))
-    }
-  }
-}
-
-
-
-
 object Lenses {
-
-  type AbstractObserver[A, B] = AbstractSetter[A, B, A]
 
   type Id[A] = A
   type *[A, B] = (A, B)
   type /[A, B] = Lens[A, B]
+  type +[A, B] = Either[A, B]
 
   // A / A = 1
   def one[A]: (A / A) = One[A]
@@ -268,6 +218,252 @@ object Lenses {
     override def set(x: Array[A], y: A): Array[A] = { x.update(i, y); x }
   }
 
+
+  def subject[A]: Subject[A] = new Subject[A] {}
+
+  def observe[A](x: A): Observable[A] = new Observable[A] {
+    override def set(nothing: Unit, y: Observer[A]): Unit = {
+      y.raise(x)
+    }
+  }
+
+  import Prisms._
+
+  type Observer[A] = Unit - A
+
+  trait Observable[A] extends AbstractSetter[Unit, Observer[A], Unit] {
+
+    def subscribe(x: Observer[A]): Unit = set((), x)
+
+    def map[B](f: A=>B): Observable[B] = {
+      val self = this
+      new Observable[B] {
+        // 1 / A * A = 1
+        override def set(nothing: Unit, ob: Observer[B]): Unit = {
+          self.subscribe(new Observer[A] {
+            // throw = dual of Lens.get
+            override def raise(x: A): Unit = {
+              ob.raise(f(x))
+            }
+
+            // inject A into E
+            override def handle(y: Unit): Prisms.+[A, Unit] = {
+              Right(())
+            }
+          })
+        }
+      }
+    }
+
+    def flatMap[B](f: A=>Observable[B]): Observable[B] = {
+      val self = this
+      new Observable[B] {
+        // 1 / A * A = 1
+        override def set(nothing: Unit, ob: Observer[B]): Unit = {
+          self.subscribe(new Observer[A] {
+            // throw = dual of Lens.get
+            override def raise(x: A): Unit = {
+              val inner = f(x)
+              inner.set((), ob)
+            }
+
+            // inject A into E
+            override def handle(y: Unit): Prisms.+[A, Unit] = {
+              Right(())
+            }
+          })
+        }
+      }
+    }
+
+    def fold[B](z: B, f: (B, A)=>B): Observable[B] = {
+      val self = this
+      new Observable[B] {
+        // 1 / A * A = 1
+        override def set(nothing: Unit, xs: Observer[B]): Unit = {
+          self.subscribe(new Observer[A] {
+            var acc: B = z
+            // throw = dual of Lens.get
+            override def raise(x: A): Unit = {
+              acc = f(acc, x)
+              xs.raise(acc)
+            }
+            // inject A into E
+            override def handle(y: Unit): A + Unit = {
+              Right(())
+            }
+          })
+        }
+      }
+    }
+
+    def take(n: Int): Observable[A] = takeAndThen(n, nop)
+    def drop(n: Int): Observable[A] = nop.takeAndThen(n, this)
+
+    def takeAndThen(n: Int, andThen: Observable[A]): Observable[A] = {
+      val self = this
+      new Observable[A] {
+        override def set(nothing: Unit, xs: Observer[A]): Unit = {
+          self.subscribe(new Observer[A] {
+            var taken = 0
+            override def raise(x: A): Unit = {
+              taken = taken + 1
+              if (taken <= n) {
+                xs.raise(x)
+              } else if (taken == n+1) {
+                andThen.set((), xs)
+                gc(this)
+              }
+            }
+
+            // inject A into E
+            override def handle(y: Unit): A + Unit = Right(())
+          })
+        }
+      }
+    }
+
+    def or (other: Observable[A]): Observable[A] = merge(other)
+
+    def merge(other: Observable[A]): Observable[A] = {
+      val self = this
+      new Observable[A] {
+        def set(nothing: Unit, xs: Observer[A]): Unit = {
+          self.set((), xs)
+          other.set((), xs)
+        }
+      }
+    }
+
+    def takeUntil[B](signal: Observable[B], andThen: Observable[A] = nop): Observable[A] = {
+      val self = this
+      new Observable[A] {
+        def set(nothing: Unit, xs: Observer[A]): Unit = {
+          var done = false
+          var switched = false
+          val test = new Observer[B] {
+            def raise(x: B): Unit = done = true
+            // inject A into E
+            override def handle(y: Unit): B + Unit = Right(())
+          }
+          signal.set((), test)
+          self.set((), new Observer[A] {
+            var taken = 0
+            override def raise(x: A): Unit = {
+              if (!done) {
+                xs.raise(x)
+              } else if (!switched) {
+                switched = true
+                andThen.set((), xs)
+                gc(this)
+              }
+            }
+            override def handle(y: Unit): A + Unit = Right(())
+          })
+        }
+      }
+    }
+
+    def followedBy(xs: Observable[A]): Observable[A] = {
+      takeAndThen(1, xs)
+    }
+
+    def filter(p: A=>Boolean): Observable[A] = {
+      val self = this
+      new Observable[A] {
+        override def set(nothing: Unit, xs: Observer[A]): Unit = {
+          self.set(nothing: Unit, new Observer[A] {
+            override def raise(x: A): Unit = {
+              if (p(x)) xs.raise(x)
+            }
+
+            // inject A into E
+            override def handle(y: Unit): A + Unit = {
+               Right(())
+            }
+          })
+        }
+      }
+    }
+
+    def repeat(n: Int): Observable[A] = {
+      val self = this
+      new Observable[A] {
+        override def set(nothing: Unit, xs: Observer[A]): Unit = {
+          self.set((), new Observer[A] {
+            override def raise(x: A): Unit = {
+              for { i <- 0 until n } xs.raise(x)
+            }
+            // inject A into E
+            override def handle(y: Unit): A + Unit = {
+              Right(())
+            }
+          })
+        }
+      }
+    }
+  }
+
+  case class Subject[A]() extends Observable[A] with (Unit / (Unit - A)) {
+
+    val subscribers = new mutable.WeakHashMap[(Unit - A), Unit]
+
+    var last: Option[A] = None
+
+    override def get(x: Unit): Unit - A = {
+       new (Unit - A) {
+         // throw = dual of Lens.get
+         override def raise(x: A): Unit = {
+           last = Some(x)
+           for (j <- subscribers.keySet) j.raise(x)
+         }
+
+         // inject A into E
+         override def handle(y: Unit): A + Unit = {
+             last match {
+               case Some(x) => Left(x)
+               case None => Right(())
+             }
+         }
+       }
+    }
+
+    override def set(x: Unit, y: Unit - A): Unit = {
+      subscribers.put(y, ())
+      val xs = roots.get(y)
+      xs match {
+        case None => {
+          val s = new mutable.HashSet[Observable[_]]
+          roots.put(y, s)
+          s.add(this)
+        }
+        case Some(y) => y.add(this)
+      }
+    }
+
+    def set(x: A): Unit = {
+      get(()).raise(x)
+    }
+  }
+
+  val roots = new mutable.WeakHashMap[Unit - _, mutable.Set[Observable[_]]]
+
+  def gc[A](xs: Unit - A): Unit = {
+    //println("gc: "+xs)
+    roots.get(xs) match {
+      case None =>
+      case Some(ys) => {
+        roots.remove(xs)
+      }
+    }
+  }
+
+  def nop[A] = new Observable[A] {
+    // 1 / A * A = 1
+    override def set(nothing: Unit, x: Observer[A]): Unit = {}
+  }
+
+
   def main(argv: Array[String]): Unit = {
     type Point = (Int, Int)  // Int * Int
     type Interval = (Point, Point)  // Point * Point
@@ -286,19 +482,74 @@ object Lenses {
     val z1 = idx * end * x
     println("LENS LAWS a " + laws(z1, a, 20))
     println(z1.get(a))
+    def Println[A](prefix: String): Observer[A] = new Observer[A] {
+      override def raise(x: A): Unit = {
+        println(prefix + x)
+      }
+
+      // inject A into E
+      override def handle(y: Unit): Prisms.+[A, Unit] = Right(())
+    }
+    def mouseSim {
+      case class MouseEvent(val x: Int, val y: Int, val button: Int) {}
+
+      val mouseDown = subject[MouseEvent]
+      val mouseUp = subject[MouseEvent]
+      val mouseMove = subject[MouseEvent]
+      val mouseLeave = subject[MouseEvent]
+      val mouseEnter = subject[MouseEvent]
+
+      val mouseDrag = (mouseDown followedBy mouseMove) takeUntil mouseUp
+
+      val mouseArmed = for {
+        press <- mouseDown
+        pressOrReenteredBeforeRelease <- observe(press) or (mouseEnter takeUntil mouseUp)
+      } yield pressOrReenteredBeforeRelease
+
+      val mouseDisarmed = for {
+        arm <- mouseArmed
+        nextLeaveOrRelease <- (mouseLeave or mouseUp) take 1
+      } yield nextLeaveOrRelease
+
+      val mouseTrigger = for {
+        arm <- mouseArmed
+        releaseBeforeLeave <- mouseUp takeUntil mouseLeave
+      } yield releaseBeforeLeave
+
+      var arm = Println[MouseEvent]("arm=")
+      var disarm = Println[MouseEvent]("disarm=")
+      var trig = Println[MouseEvent]("trigger=")
+      mouseArmed.subscribe(arm)
+      mouseDisarmed.subscribe(disarm)
+      mouseTrigger.subscribe(trig)
+
+      mouseEnter.set(new MouseEvent(3, 29, 0))
+      mouseDown.set(new MouseEvent(3, 30, 1))
+      mouseLeave.set(new MouseEvent(3, 50, 1))
+      mouseEnter.set(new MouseEvent(3, 33, 1))
+      mouseUp.set(new MouseEvent(3, 33, 1))
+      mouseDown.set(new MouseEvent(3, 44, 1))
+      mouseLeave.set(new MouseEvent(3, 54, 1))
+      mouseEnter.set(new MouseEvent(3, 34, 1))
+
+      val clicks = subject[Unit]
+
+      val clickCount = clicks.fold(0, (x:Int, y: Unit)=> x + 1)
+
+      val onClick = Println[Unit]("clicked=")
+      clicks.subscribe(onClick)
+      clicks.set(())
+
+      clicks.set(())
+
+      arm = null
+      disarm = null
+      trig = null
+      for { i <- 0 to 10 } System.gc()
+    }
+
+    mouseSim
   }
 
-  // A AND B IMPLIES C = (A IMPLIES B) IMPLIES C
-  def curry[A, B, C](f: (A, B)=>C): A=>(B=>C) = {
-    (x: A) => {
-      (y: B) => f(x, y)
-    }
-  }
-
-  def uncurry[A, B, C](f: A=>(B=>C)): (A, B)=>C = {
-    (x: A, y: B) => {
-      f(x)(y)
-    }
-  }
 
 }
