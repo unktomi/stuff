@@ -8,6 +8,7 @@ import java.io.{File, IOException, FileInputStream}
 import Evaluation._
 import scala.collection.mutable.ListBuffer
 
+// Isomorphism between A and B
 trait ISO[A, B] {
   def fw(x: A): B
   def bw(y: B): A
@@ -15,6 +16,10 @@ trait ISO[A, B] {
 
 // A IMPLIES B = (NOT A) OR B
 trait LazilyImplies[A, B] extends (NOT[A] OR B) {
+
+  override def apply(v1: (NOT[A]) => Nothing, v2: (B) => Nothing): Nothing
+
+  // composition
   def *[C](xs: LazilyImplies[B, C]): LazilyImplies[A, C] = compose(xs)
   def compose[C](xs: LazilyImplies[B, C]): LazilyImplies[A, C] = {
     val self = this
@@ -26,10 +31,23 @@ trait LazilyImplies[A, B] extends (NOT[A] OR B) {
       }
     }
   }
+  // as strict
+  def strictly: StrictlyImplies[A, B] = {
+    val self = this
+    new StrictlyImplies[A, B] {
+      override def apply(v1: AND[A, NOT[B]]): Nothing = {
+        v1.apply((u: A, v: NOT[B])=> self.apply((f: NOT[A])=> f(u), (g:B)=> v(g)))
+      }
+    }
+  }
 }
 
 // A IMPLIES B = NOT (A AND NOT B)
 trait StrictlyImplies[A, B] extends NOT[A AND NOT[B]] {
+
+  override def apply(v1: AND[A, NOT[B]]): Nothing
+
+  // composition
   def *[C](xs: StrictlyImplies[B, C]): StrictlyImplies[A, C] = compose(xs)
   def compose[C](f: StrictlyImplies[B, C]): StrictlyImplies[A, C] = {
     val self = this
@@ -53,6 +71,25 @@ trait StrictlyImplies[A, B] extends NOT[A AND NOT[B]] {
       }
     }
   }
+
+  // as lazy
+  def lazily: LazilyImplies[A, B] = {
+    val self = this
+    new LazilyImplies[A, B] {
+      override def apply(v1: (NOT[A]) => Nothing, v2: (B) => Nothing): Nothing = {
+        v1(new NOT[A] {
+          override def apply(v1: A): Nothing = {
+            self.apply(new (A AND NOT[B]) {
+              override def apply(k: (A, NOT[B]) => Nothing): Nothing = {
+                k(v1, v2)
+              }
+            })
+          }
+        })
+      }
+    }
+  }
+
 }
 
 object Evaluation {
@@ -70,10 +107,49 @@ object Evaluation {
   type ->[A, B] = StrictlyImplies[A, B]
 
   // Strict Coexponential
-  type /=>[A, B] = A AND NOT[B]
+  type /->[A, B] = A AND NOT[B]
   // Lazy Coexponential
   type WITHOUT[A, B] = NOT[NOT[A] OR B]
-  type /~>[A, B] = WITHOUT[A, B]
+  type /~>[A, B] = A WITHOUT B
+
+  // Intersection
+  type and[T, U] = T with U
+
+  type Cont[T] = NOT[NOT[T]]
+
+  // Union
+  type or[T, U] = { type apply[X] = Cont[X] <:<  NOT[NOT[T] with NOT[U]] }
+
+
+  trait NaturalTransformation[F[_], G[_]] {
+    def apply[A](f: F[A]): G[A]
+  }
+
+  type ==>[F[_], G[_]] = NaturalTransformation[F, G]
+
+  implicit def polyToMono[F[_], G[_], T](f : F ==> G) : F[T] => G[T] = f(_)
+
+  type Const[C] = {
+    type apply[T] = C
+  }
+
+  val j: Int = 1
+  val k: Const[Int]#apply[Int] = j
+
+  val rev = new (List ==> List) {
+    override def apply[A](f: List[A]): List[A] = {
+      f.reverse
+    }
+  }
+
+  def listApp[A](xs: List[A], f: List[A] => List[A]): List[A] = f(xs)
+
+  val q = listApp(List(1, 2), polyToMono[List, List, Int](rev))
+
+  trait Existential[T[_], A] {
+      def apply[B](k: T[A]=>B): B
+  }
+
 
   trait Always[A] extends (A AND Always[A]) {
 
@@ -159,16 +235,81 @@ object Evaluation {
     override def toString: String = {
       take(10).toString
     }
+  }
 
-    def eventually: Always[Eventually[A]] = {
-      val self = this
-      new Always[Eventually[A]] {
-        override def apply(v1: (Eventually[A], Always[Eventually[A]]) => Nothing): Nothing = {
-           self.apply((x, y)=> {
-             v1(now(x), y.eventually)
-           })
+  case class ISOLazyStrict[A, B]() extends  ISO[LazilyImplies[A, B], StrictlyImplies[A, B]] {
+    override def fw(x: LazilyImplies[A, B]): StrictlyImplies[A, B] = {
+      new StrictlyImplies[A, B] {
+        override def apply(v1: AND[A, NOT[B]]): Nothing = {
+          v1.apply((u: A, v: NOT[B])=> x.apply((f: NOT[A])=> f(u), (g:B)=> v(g)))
         }
       }
+    }
+
+    override def bw(y: StrictlyImplies[A, B]): LazilyImplies[A, B] = {
+      new LazilyImplies[A, B] {
+        override def apply(v1: (NOT[A]) => Nothing, v2: (B) => Nothing): Nothing = {
+          v1(new NOT[A] {
+            override def apply(v1: A): Nothing = {
+              y.apply(new (A AND NOT[B]) {
+                override def apply(k: (A, NOT[B]) => Nothing): Nothing = {
+                  k(v1, v2)
+                }
+              })
+            }
+          })
+        }
+      }
+    }
+  }
+
+  case class T1[A]() extends ISO[Always[A], NOT[Eventually[NOT[A]]]] {
+
+    override def fw(x: Always[A]): NOT[Eventually[NOT[A]]] = new NOT[Eventually[NOT[A]]] {
+      override def apply(v1: Eventually[NOT[A]]): Nothing = {
+        v1.apply((k: NOT[A])=>x.apply((y: A, ys: Always[A])=> k(y)), (xs: Eventually[NOT[A]])=>apply(xs))
+      }
+    }
+
+    override def bw(y: NOT[Eventually[NOT[A]]]): Always[A] = new Always[A] {
+      val me: Always[A] = this
+      override def apply(v1: (A, Always[A]) => Nothing): Nothing = {
+        val v: Eventually[NOT[A]] = new Eventually[NOT[A]] {
+          override def apply(k1: (NOT[A]) => Nothing, k2: (Eventually[NOT[A]]) => Nothing): Nothing = {
+             k1(new NOT[A] {
+               override def apply(x: A): Nothing = {
+                  v1(x, bw(new NOT[Eventually[NOT[A]]] {
+                    override def apply(v1: Eventually[NOT[A]]): Nothing = {k2(v1)}
+                  }))
+               }
+             })
+          }
+        }
+        y.apply(v)
+      }
+    }
+  }
+
+  case class T2[A]() extends ISO[Eventually[A], NOT[Always[NOT[A]]]] {
+    override def fw(e: Eventually[A]): NOT[Always[NOT[A]]] = {
+       new NOT[Always[NOT[A]]] {
+         override def apply(v1: Always[NOT[A]]): Nothing = {
+           e.apply((x:A)=>v1.apply((k, ks)=>k.apply(x)), (e1: Eventually[A])=> fw(e1).apply(v1))
+         }
+       }
+    }
+
+    override def bw(y: NOT[Always[NOT[A]]]): Eventually[A] = {
+       new Eventually[A] {
+         override def apply(v1: (A) => Nothing, v2: (Eventually[A]) => Nothing): Nothing = {
+           y.apply(new Always[NOT[A]] {
+             val me: Always[NOT[A]] = this
+             override def apply(k: (NOT[A], Always[NOT[A]]) => Nothing): Nothing = {
+               k(v1, me)
+             }
+           })
+         }
+       }
     }
   }
 
@@ -179,6 +320,9 @@ object Evaluation {
   }
 
   trait Eventually[A] extends (A OR Eventually[A]) {
+
+    override def apply(v1: (A) => Nothing, v2: (Eventually[A]) => Nothing): Nothing
+
     def map[B](f: A~>B): Eventually[B] = {
       val self = this
       new Eventually[B] {
@@ -191,6 +335,16 @@ object Evaluation {
         }
       }
     }
+
+
+    override def toString(): String = {
+       try {
+         apply((x: A) => throw new Return("" + x), (xs: Eventually[A]) => throw Return(xs.toString()))
+       } catch {
+         case r: Return[String] => r.result
+       }
+    }
+
     def flatMap[B](f: A~>Eventually[B]): Eventually[B] = {
       val self = this
       new Eventually[B] {
@@ -233,8 +387,8 @@ object Evaluation {
     (x: A, y: B)=> f(x)(y)
   }
 
-  def cocurry[A, B, C] (f: C => A + B): (C /=> B) => A = {
-    (c: C /=> B) => {
+  def cocurry[A, B, C] (f: C => A + B): (C /-> B) => A = {
+    (c: C /-> B) => {
       try {
         c.apply((x: C, k: NOT[B])=> f(x).apply((v1: A)=> throw Return(v1), (v2: B)=> k(v2)))
       } catch {
@@ -243,12 +397,12 @@ object Evaluation {
     }
   }
 
-  def uncocurry[A, B, C](k: (C /=> B) => A): C => (A + B) = {
+  def uncocurry[A, B, C](k: (C /-> B) => A): C => (A + B) = {
      new (C => A + B) {
        override def apply(x: C): A + B = {
          new (A + B) {
            override def apply(k1: (A) => Nothing, k2: (B) => Nothing): Nothing = {
-             val a = k.apply(new (C /=> B) {
+             val a = k.apply(new (C /-> B) {
                override def apply(k: (C, NOT[B]) => Nothing): Nothing = {
                  k(x, k2)
                }
@@ -302,7 +456,7 @@ object Evaluation {
   }
 
   // Co-Distributive Law
-  case class CoDist[A, B, C]() extends ISO[ A OR (B AND C), (A OR B) AND (A OR C)] {
+  case class CoDist[A, B, C]() extends ISO[A OR (B AND C), (A OR B) AND (A OR C)] {
     override def fw(xs: A OR (B AND C)): (A OR B) AND (A OR C) = {
       new ((A OR B) AND (A OR C)) {
         override def apply(f: (A OR B, A OR C) => Nothing): Nothing = {
@@ -350,10 +504,10 @@ object Evaluation {
 
   def apply[B, C](f: B => C, x: B): C = f(x)
 
-  def coapply[B, C](x: C): (C /=> B) + B = {
-    new ((C /=> B) + B) {
-      override def apply(k1: NOT[(C /=> B)], k2: NOT[B]): Nothing = {
-         k1(new (C /=> B) {
+  def coapply[B, C](x: C): (C /-> B) + B = {
+    new ((C /-> B) + B) {
+      override def apply(k1: NOT[(C /-> B)], k2: NOT[B]): Nothing = {
+         k1(new (C /-> B) {
            override def apply(k3: (C, NOT[B]) => Nothing): Nothing = {
              k3(x, k2)
            }
@@ -423,12 +577,29 @@ object Evaluation {
 
   def end(): Nothing = throw Return(())
 
+  def run(f: ()=> Unit): Unit = {
+    try {
+        f()
+    } catch {
+      case Return(())=> ()
+    }
+  }
+
   def main(argv: Array[String]): Unit = {
-    
+
+    def size[T: (Int or String)#apply](t: T) = {
+      t match {
+        case i:Int => i
+        case j: String => j.length()
+      }
+    }
+    println(size(100))
+    println(size("Hello"))
+
     def t {
       val k = cocurry(openFile(_:File))
       val i = uncocurry(k)
-      val e = k.apply(new (File /=> FileInputStream) {
+      val e = k.apply(new (File /-> FileInputStream) {
         override def apply(v1: (File, NOT[FileInputStream]) => Nothing): Nothing = {
           v1(new File("."), new NOT[FileInputStream] {
             override def apply(v1: FileInputStream): Nothing = {
@@ -485,6 +656,29 @@ object Evaluation {
     val n = m.fold(0, (x: Int, y:Int)=> x + y)
 
     println(n)
+    val t1 = new T1[Int]()
+    run(() => {
+      t1.fw(n).apply(now(new NOT[Int] {
+        override def apply(v1: Int): Nothing = {
+          println("Wat? " + v1)
+          end()
+        }
+      }))
+    })
+    val qs = t1.bw(t1.fw(n))
+    println(qs)
+
+    val t2 = new T2[Int]()
+    run(() => {
+      t2.fw(now(100)).apply(repeat(new NOT[Int] {
+        override def apply(v1: Int): Nothing = {
+          println("WAT ???" + v1)
+          end()
+        }
+      }))
+    })
+    val vs = t2.bw(t2.fw(now(99)))
+    println(vs)
     t
     laz
     stric

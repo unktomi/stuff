@@ -128,9 +128,9 @@ case class Zero[A]() extends (A - A) {
 }
 
 // Evidence E is isomorphic to A + R
-trait PrismISO[E, A, R] extends ISO[E, (A + R)] {
-  def raise(y: A + R): E = bw(y)
-  def handle(x: E): A + R = fw(x)
+trait PrismISO[E, A, R] extends ISO[E, (A + R)] with (E - (A + R)) {
+  override def raise(y: A + R): E = bw(y)
+  override def handle(y: E): (A + R) + E = Left(fw(y))
 }
 
 
@@ -166,122 +166,11 @@ case class Subtype[A, B <: A]() extends (A - B) {
 
   // inject A into E
   override def handle(y: A): B + A = {
-    y match {
-      case (x: B) => Left(x)
-      case _ => Right(y)
-    }
-  }
-}
-
-/*
-
-case class T9[A, B]() extends ISO[(A + B) - A, (B - Nothing)] {
-  override def fw(unused: (A + B) - A): B - Nothing = {
-    just[B]
-  }
-
-  override def bw(unused: B - Nothing): (A + B) - A = {
-    left[A, B]
+    if (y.isInstanceOf[B]) Left(y.asInstanceOf[B]) else Right(y)
   }
 }
 
 
-
-case class T2[A, B, C]() extends ISO[(A + B) - (A + C), (A - A + B) - C] {
-  override def fw(p: -[+[A, B], +[A, C]]): -[+[-[A, A], B], C] = {
-      new -[+[-[A, A], B], C] {
-        // throw = dual of Lens.get
-        override def raise(x: C): +[-[A, A], B] = p.raise(Right(x)) match {
-          case Left(a) => Left(new (A - A) {
-            // throw = dual of Lens.get
-            override def raise(x: A): A = x
-
-            // inject A into E
-            override def handle(y: A): +[A, A] = {
-              y match {
-                case a => Left(a)
-                case _ => Right(y)
-              }
-            }
-          })
-          case Right(b) => Right(b)
-        }
-
-        // inject A into E
-        override def handle(y: +[-[A, A], B]): +[C, +[-[A, A], B]] = {
-          y match {
-            case Left(aa) => Right(Left(aa))
-            case Right(b) => Right(Right(b))
-          }
-        }
-      }
-  }
-
-  override def bw(y: -[+[-[A, A], B], C]): -[+[A, B], +[A, C]] = {
-    new (-[+[A, B], +[A, C]]) {
-      // throw = dual of Lens.get
-      override def raise(x: +[A, C]): +[A, B] = x match {
-        case Left(a) => Left(a)
-        case Right(c) => y.raise(c) match {
-          case Left(aa) => ???
-          case Right(b) => Right(b)
-        }
-      }
-
-      // inject A into E
-      override def handle(j: +[A, B]): +[+[A, C], +[A, B]] = {
-        j match {
-          case Left(a)=> Left(Left(a))
-          case Right(b)=> Right(Right(b))
-        }
-      }
-    }
-  }
-}
-
-case class T3[A, B, C]() extends ISO[(A + B) - (A + C), B - C] {
-  override def fw(p: (A + B) - (A + C)): B - C = new (B - C) {
-    // throw = dual of Lens.get
-    override def raise(x: C): B = p.raise(Right(x)) match {
-      case Left(a) => ???
-      case Right(b) => b
-    }
-
-    // inject A into E
-    override def handle(y: B): C + B = p.handle(Right(y)) match {
-      case Left(ac) => ac match {
-        case Left(a) => ???
-        case Right(c) => Left(c)
-      }
-      case Right(ab) => ab match {
-        case Left(a) => ???
-        case Right(b) => Right(b)
-      }
-    }
-  }
-
-  override def bw(y: B - C): (A + B) - (A + C) = {
-    new ((A + B) - (A + C)) {
-      // throw = dual of Lens.get
-      override def raise(x: A + C): A + B = {
-        x match {
-          case Left(a) => Left(a)
-          case Right(c) => Right(y.raise(c))
-        }
-      }
-
-      // inject A into E
-      override def handle(y: A + B): (A + C) + (A + B) = {
-        y match {
-          case Left(a) => Left(Left(a))
-          case Right(b) => Right(Right(b))
-        }
-      }
-    }
-  }
-}
-
-*/
 object Prisms {
 
   implicit def rightToMaybe[X](xs: Unit + X): Option[X] = xs match {
@@ -322,12 +211,16 @@ object Prisms {
       case Right(e) => println("Right "+ e + " == " + x); e == x
     }
   }
+
   // As in van Laarhoven
   def prism[A, E](iso: PrismISO[E, A, _]): (E - A) = {
     new (E - A) {
       override def raise(x: A): E = iso.raise(Left(x))
       override def handle(y: E): (A + E) = iso.handle(y) match {
-        case Left(a) => Left(a)
+        case Left(ar) => ar match {
+          case Left(a) => Left(a)
+          case Right(r) => Right(y)
+        }
         case Right(_) => Right(y)
       }
     }
@@ -355,6 +248,31 @@ object Prisms {
       case Some(a) => Left(a)
     }
   }
+
+  def minus1[X <: Exception] = new (Nothing - X) {
+    // throw = dual of Lens.get
+    override def raise(x: X): Nothing = throw x
+
+    // inject A into E
+    override def handle(y: Nothing): X + Nothing = y
+  }
+
+  def observer[X] = new (Unit - X) {
+    var last: Option[X]  = None
+    // throw = dual of Lens.get
+    override def raise(x: X): Unit = {
+       last = Some(x)
+    }
+
+    // inject A into E
+    override def handle(y: Unit): X + Unit = {
+       last match {
+         case None => Right(())
+         case Some(x) => Left(x)
+       }
+    }
+  }
+
 
 
   def main(argv: Array[String]): Unit = {

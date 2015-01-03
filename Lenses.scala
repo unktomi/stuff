@@ -15,6 +15,8 @@ trait Functor[F[_]] {
   def map[A, B](xs: F[A], f: A=>B): F[B]
 }
 
+// Type parameter names are as in Kmett.
+
 trait AbstractGetter[S, A] {
 
   def get(x: S): A
@@ -149,13 +151,12 @@ case class One[A]() extends (A / A) {
 }
 
 // Evidence A is isomorphic to (B * R)
-trait ISOLens[A, B, R] extends ISO[A, (B, R)] with (A / B) {
+trait LensISO[A, B, R] extends ISO[A, (B, R)] with (A / B) {
   def get(x: A): B = this.fw(x)._1
   def set(x: A, y: B): A = {
     val z = this.fw(x)
     this.bw((y, z._2))
   }
-
 }
 
 
@@ -165,6 +166,17 @@ object Lenses {
   type *[A, B] = (A, B)
   type /[A, B] = Lens[A, B]
   type +[A, B] = Either[A, B]
+
+  // As in van Laarhoven
+  def lens[A, B](iso: LensISO[A, B, _]): (A / B) = {
+    new (A / B) {
+      // project B from x
+      override def get(x: A): B = iso.get(x)
+
+      // replace B in x with y
+      override def set(x: A, y: B): A = iso.set(x, y)
+    }
+  }
 
   // A / A = 1
   def one[A]: (A / A) = One[A]
@@ -219,7 +231,17 @@ object Lenses {
 
   type Observer[A] = Unit - A
 
+  trait WeakObserver[A] extends Observer[A] {
+    override def finalize(): Unit = {
+      println("finalize "+this)
+    }
+  }
+
   trait Observable[A] extends AbstractSetter[Unit, Observer[A], Unit] {
+
+    override def finalize(): Unit = {
+      println("finalize "+this)
+    }
 
     def subscribe(x: Observer[A]): Unit = set((), x)
 
@@ -228,14 +250,19 @@ object Lenses {
       new Observable[B] {
         // 1 / A * A = 1
         override def set(nothing: Unit, ob: Observer[B]): Unit = {
-          self.subscribe(new Observer[A] {
+          val st = self + " map " + f
+          self.subscribe(new WeakObserver[A] {
+            override def toString: String = {
+               st
+            }
+
             // throw = dual of Lens.get
             override def raise(x: A): Unit = {
               ob.raise(f(x))
             }
 
             // inject A into E
-            override def handle(y: Unit): Prisms.+[A, Unit] = {
+            override def handle(y: Unit): A + Unit = {
               Right(())
             }
           })
@@ -248,7 +275,13 @@ object Lenses {
       new Observable[B] {
         // 1 / A * A = 1
         override def set(nothing: Unit, ob: Observer[B]): Unit = {
-          self.subscribe(new Observer[A] {
+          val st = self + " flatmap " + f
+          self.subscribe(new WeakObserver[A] {
+
+            override def toString: String = {
+               st
+            }
+
             // throw = dual of Lens.get
             override def raise(x: A): Unit = {
               val inner = f(x)
@@ -256,7 +289,7 @@ object Lenses {
             }
 
             // inject A into E
-            override def handle(y: Unit): Prisms.+[A, Unit] = {
+            override def handle(y: Unit): A + Unit = {
               Right(())
             }
           })
@@ -269,7 +302,7 @@ object Lenses {
       new Observable[B] {
         // 1 / A * A = 1
         override def set(nothing: Unit, xs: Observer[B]): Unit = {
-          self.subscribe(new Observer[A] {
+          self.subscribe(new WeakObserver[A] {
             var acc: B = z
             // throw = dual of Lens.get
             override def raise(x: A): Unit = {
@@ -428,14 +461,8 @@ object Lenses {
     override def set(x: Unit, y: Unit - A): Unit = {
       if (u == y) return ()
       subscribers.put(y, ())
-      val xs = roots.get(y)
-      xs match {
-        case None => {
-          val s = new mutable.HashSet[Observable[_]]
-          roots.put(y, s)
-          s.add(this)
-        }
-        case Some(y) => y.add(this)
+      if (!y.isInstanceOf[WeakObserver[A]]) {
+        addGCRoot(y, this)
       }
     }
 
@@ -444,10 +471,20 @@ object Lenses {
     }
   }
 
-  val roots = new mutable.WeakHashMap[Unit - _, mutable.Set[Observable[_]]]
-
+  val roots = new mutable.WeakHashMap[(Unit - _), mutable.Set[Observable[_]]]
+  def addGCRoot[A](y: Unit - A, x: Observable[_]) = {
+    val xs = roots.get(y)
+    xs match {
+      case None => {
+        val s = new mutable.HashSet[Observable[_]]
+        roots.put(y, s)
+        s.add(x)
+      }
+      case Some(ys) => ys.add(x)
+    }
+  }
   def gc[A](xs: Unit - A): Unit = {
-    //println("gc: "+xs)
+    println("gc: "+xs)
     roots.get(xs) match {
       case None =>
       case Some(ys) => {
@@ -500,19 +537,19 @@ object Lenses {
       println("MOUSE ENTER: "+laws(mouseEnter, (), mouseEnter.get()))
       Prisms.laws(mouseEnter.get(), new MouseEvent(1, 1, 1))
 
-      val mouseDrag = (mouseDown followedBy mouseMove) takeUntil mouseUp
+      var mouseDrag = (mouseDown followedBy mouseMove) takeUntil mouseUp
 
-      val mouseArmed = for {
+      var mouseArmed = for {
         press <- mouseDown
         pressOrReenteredBeforeRelease <- observe(press) or (mouseEnter takeUntil mouseUp)
       } yield pressOrReenteredBeforeRelease
 
-      val mouseDisarmed = for {
+      var mouseDisarmed = for {
         arm <- mouseArmed
         nextLeaveOrRelease <- (mouseLeave or mouseUp) take 1
       } yield nextLeaveOrRelease
 
-      val mouseTrigger = for {
+      var mouseTrigger = for {
         arm <- mouseArmed
         releaseBeforeLeave <- mouseUp takeUntil mouseLeave
       } yield releaseBeforeLeave
@@ -546,6 +583,9 @@ object Lenses {
       arm = null
       disarm = null
       trig = null
+      mouseArmed = null
+      mouseTrigger = null
+      mouseDrag = null
       for { i <- 0 to 10 } System.gc()
     }
 
