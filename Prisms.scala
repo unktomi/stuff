@@ -137,7 +137,6 @@ trait PrismISO[E, A, R] extends ISO[E, (A + R)] with (E - (A + R)) {
 // X + 1 - 2  = X - 1
 case class MaybeNot[X](except: X) extends (Option[X] - Boolean) {
 
-
   override def raise(x: Boolean): Option[X] = if (x) Some(except) else None
 
   // inject A into E
@@ -226,14 +225,14 @@ object Prisms {
     }
   }
 
-  // A - (A + E) = -E
+  // (A + E) - A = E
   def left[A, E]: (A + E) - A = prism(new PrismISO[A+E, A, E] {
     def fw(x: (A + E)): (A + E) = x
     def bw(y: (A + E)): (A + E) = y
   })
 
-  // E - (A + E) = A
-  def right[A, E]: A+E - E = prism(new PrismISO[A+E, E, A] {
+  // (A + E) - E = A
+  def right[A, E]: (A + E) - E = prism(new PrismISO[A+E, E, A] {
     def fw(x: (A + E)): (E + A) = x.swap
     def bw(y: (E + A)): (A + E) = y.swap
   })
@@ -254,7 +253,7 @@ object Prisms {
     override def raise(x: X): Nothing = throw x
 
     // inject A into E
-    override def handle(y: Nothing): X + Nothing = y
+    override def handle(y: Nothing): X + Nothing = Right(y)
   }
 
   def observer[X] = new (Unit - X) {
@@ -270,6 +269,52 @@ object Prisms {
          case None => Right(())
          case Some(x) => Left(x)
        }
+    }
+  }
+
+  case class Complex[A, B, C, D] extends ISO[(Either[A, B], Either[C, D]),
+    ((A, C) - (B, D), Either[(A, B), (A, C)])] {
+    override def fw(x: (Either[A, B], Either[C, D])): (-[(A, C), (B, D)], Either[(A, B), (A, C)]) = {
+      (new ((A, C) - (B, D)) {
+        // throw = dual of Lens.get
+        override def raise(u: (B, D)): (A, C) = {
+          x._1 match {
+            case Left(a) => x._2 match {
+              case Left(c) =>  (a, c)
+              case Right(d) =>  ???  // (a, d)
+            }
+            case Right(b) => x._2 match {
+              case Left(c) => ??? // (b, c)
+              case Right(d) => ??? // (b, d)
+            }
+          }
+        }
+
+        // inject A into E
+        override def handle(y: (A, C)): (B, D) + (A, C) = {
+          x._1 match {
+            case Left(a) => x._2 match {
+              case Left(c) =>  Right((a, c))
+              case Right(d) => Right(y)// (a, d)
+            }
+            case Right(b) => x._2 match {
+              case Left(c) => Right(y) // (b, c)
+              case Right(d) => Left((b, d)) // (b, d)
+            }
+          }
+
+        }
+      },
+        x._1 match {
+          case Left(a) => x._2 match {
+            case Left(c) => Right((a, c))
+          }
+        }
+        )
+    }
+
+    override def bw(y: (-[(A, C), (B, D)], Either[(A, B), (A, C)])): (Either[A, B], Either[C, D]) = {
+       ???
     }
   }
 

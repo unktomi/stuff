@@ -5,11 +5,8 @@ package main.scala.test.lenses
  */
 
 import Lenses._
-
-
-
+//import main.scala.test.lenses.Prisms._
 import scala.collection.mutable
-
 
 trait Functor[F[_]] {
   def map[A, B](xs: F[A], f: A=>B): F[B]
@@ -107,7 +104,7 @@ trait Lens[A, B] extends AbstractLens[A, A, B, B] {
 
   def swap() = invert()
 
-  def invert(): (B / A) = {
+  def invert(): B / A = {
     val self = this
     new (B / A) {
       var store: Option[A] = None
@@ -397,7 +394,6 @@ object Lenses {
             override def raise(x: A): Unit = {
               if (p(x)) xs.raise(x)
             }
-
             // inject A into E
             override def handle(y: Unit): A + Unit = {
                Right(())
@@ -434,7 +430,7 @@ object Lenses {
       // throw = dual of Lens.get
       override def raise(x: A): Unit = {
         last = Some(x)
-        for (j <- subscribers.keySet) j.raise(x)
+        for { j <- subscribers.keySet } j.raise(x)
       }
 
       // inject A into E
@@ -472,6 +468,7 @@ object Lenses {
   }
 
   val roots = new mutable.WeakHashMap[(Unit - _), mutable.Set[Observable[_]]]
+
   def addGCRoot[A](y: Unit - A, x: Observable[_]) = {
     val xs = roots.get(y)
     xs match {
@@ -483,6 +480,7 @@ object Lenses {
       case Some(ys) => ys.add(x)
     }
   }
+
   def gc[A](xs: Unit - A): Unit = {
     println("gc: "+xs)
     roots.get(xs) match {
@@ -497,6 +495,27 @@ object Lenses {
     override def set(nothing: Unit, x: Observer[A]): Unit = {}
   }
 
+  trait I_ISO[X] extends ISO[(X, X), Prism[Nothing, Unit]] {
+    class PairExc[X](val p: (X, X)) extends Exception {}
+    override def bw(y: Nothing - Unit): (X, X) = {
+      try {
+        y.raise(())
+      } catch {
+        case e: PairExc[X] => e.p
+      }
+    }
+
+    override def fw(x: (X, X)): Nothing - Unit = new (Nothing - Unit)  {
+      // inject A into E
+      override def handle(y: Nothing): Unit + Nothing = {
+         Right(y)
+      }
+      // throw = dual of Lens.get
+      override def raise(u: Unit): Nothing = {
+        throw new PairExc(x)
+      }
+    }
+  }
 
   def main(argv: Array[String]): Unit = {
     type Point = (Int, Int)  // Int * Int
@@ -584,6 +603,7 @@ object Lenses {
       disarm = null
       trig = null
       mouseArmed = null
+      mouseDisarmed = null
       mouseTrigger = null
       mouseDrag = null
       for { i <- 0 to 10 } System.gc()

@@ -36,7 +36,7 @@ trait LazilyImplies[A, B] extends (NOT[A] OR B) {
     val self = this
     new StrictlyImplies[A, B] {
       override def apply(v1: AND[A, NOT[B]]): Nothing = {
-        v1.apply((u: A, v: NOT[B])=> self.apply((f: NOT[A])=> f(u), (g:B)=> v(g)))
+        v1.apply((u: A, v: NOT[B]) => self.apply((f: NOT[A]) => f(u), (g: B) => v(g)))
       }
     }
   }
@@ -45,7 +45,7 @@ trait LazilyImplies[A, B] extends (NOT[A] OR B) {
 // A IMPLIES B = NOT (A AND NOT B)
 trait StrictlyImplies[A, B] extends NOT[A AND NOT[B]] {
 
-  override def apply(v1: AND[A, NOT[B]]): Nothing
+  override def apply(v1: A AND NOT[B]): Nothing
 
   // composition
   def *[C](xs: StrictlyImplies[B, C]): StrictlyImplies[A, C] = compose(xs)
@@ -89,7 +89,6 @@ trait StrictlyImplies[A, B] extends NOT[A AND NOT[B]] {
       }
     }
   }
-
 }
 
 object Evaluation {
@@ -100,6 +99,113 @@ object Evaluation {
   
   type +[A, B] = A OR B
   type ×[A, B] = A AND B
+
+  type LENS[A, B] = (A ~> B) AND ((A AND B) ~> A)
+  type /[A, B] = LENS[A, B]
+
+  type PRISM[E, A] = (A ~> E) AND (E ~> (A OR E))
+  type -[A, B] = PRISM[A, B]
+
+
+  case class ID1[A]() extends ISO[A - Nothing, NOT[NOT[A]]] {
+    override def bw(y: NOT[NOT[A]]): A - Nothing = {
+      new (A - Nothing) {
+
+        override def toString(): String = {
+          try {
+            apply((j, k) => j.apply((nothing) => ???, (v: A) => throw Return(v)))
+          } catch {
+            case ret:Return[A] => ret.result.toString
+          }
+        }
+
+        override def apply(v1: (~>[Nothing, A], ~>[A, OR[Nothing, A]]) => Nothing): Nothing = {
+          y.apply((x: A) => {
+            v1.apply(new (Nothing ~> A) {
+              override def apply(v1: (NOT[Nothing]) => Nothing, v2: (A) => Nothing): Nothing = {
+                v2(x)
+              }
+            },
+              new (A ~> (Nothing + A)) {
+                override def apply(ignored: (NOT[A]) => Nothing, v2: (+[Nothing, A]) => Nothing): Nothing = {
+                  v2(new (Nothing + A) {
+                    override def apply(ignored: (Nothing) => Nothing, k2: (A) => Nothing): Nothing = {
+                      k2(x)
+                    }
+                  })
+                }
+              })
+          })
+        }
+      }
+    }
+
+    override def fw(x: A - Nothing): NOT[NOT[A]] = {
+      (ret: NOT[A])=> {
+        x.apply((_, k: A ~> (Nothing + A)) => k.apply((k1: NOT[A])=> ???,
+                                  (k2: Nothing + A)=> k2.apply((nothing: Nothing)=> nothing, (v: A)=> ret(v))))
+      }
+    }
+  }
+
+  case class ID2[A, B]() extends ISO[(A + B) - B, A - Nothing] {
+    override def bw(y: A - Nothing): (A + B) - B = {
+      new ((A + B) - B) {
+
+        override def apply(v1: (~>[B, +[A, B]], ~>[+[A, B], OR[B, +[A, B]]]) => Nothing): Nothing = {
+
+        //override def apply(v1: (B ~> (A + B), (A + B) ~> B + (A + B)) => Nothing): Nothing = {
+          v1.apply(new (B ~> (A + B)) {
+            override def apply(v1: (NOT[B]) => Nothing, v2: (A + B) => Nothing): Nothing = {
+               y.apply((j: Nothing ~> A, k) => k.apply((s: NOT[A])=> ???, (t: Nothing + A)=> t.apply((nothing)=> nothing, (x:A)=>v2(new (A + B) {
+                 override def apply(v1: (A) => Nothing, v2: (B) => Nothing): Nothing = {
+                   v1(x)
+                 }
+               }))) )
+            }
+          },
+          new ~>[+[A, B], OR[B, +[A, B]]] {
+            override def apply(v1: (NOT[+[A, B]]) => Nothing, v2: (OR[B, +[A, B]]) => Nothing): Nothing = {
+              v1((k)=> {
+                 ///k.apply((x: A)=> y.apply((j: Nothing ~> A, k1) => k1), (y: B)=> ???)
+                ???
+              })
+            }
+
+          })
+        }
+      }
+    }
+
+    override def fw(x: (A + B) - B): A - Nothing = {
+        ???
+    }
+  }
+
+  def just[A](x: A): A - Nothing = {
+     new (A - Nothing) {
+       override def apply(v1: (~>[Nothing, A], ~>[A, OR[Nothing, A]]) => Nothing): Nothing = {
+         v1(new (Nothing ~> A) {
+           override def apply(v1: (NOT[Nothing]) => Nothing, v2: (A) => Nothing): Nothing = {
+             v2(x)
+           }
+         },
+         new (A ~> (Nothing + A)) {
+           override def apply(v1: (NOT[A]) => Nothing, v2: (+[Nothing, A]) => Nothing): Nothing = {
+             v2(new (Nothing + A) {
+               override def apply(v1: (Nothing) => Nothing, v2: (A) => Nothing): Nothing = {
+                 v2(x)
+               }
+             })
+           }
+         })
+       }
+     }
+  }
+
+  def doublyNegate[A](x: A): NOT[NOT[A]] = {
+    (k: NOT[A]) => k(x)
+  }
 
   // Lazy Exponential
   type ~>[A, B] = LazilyImplies[A, B]
@@ -112,14 +218,15 @@ object Evaluation {
   type WITHOUT[A, B] = NOT[NOT[A] OR B]
   type /~>[A, B] = A WITHOUT B
 
+  // Sabin's Intersection and Union types:
+
   // Intersection
   type and[T, U] = T with U
 
   type Cont[T] = NOT[NOT[T]]
 
   // Union
-  type or[T, U] = { type apply[X] = Cont[X] <:<  NOT[NOT[T] with NOT[U]] }
-
+  type or[T, U] = { type selection[X] = Cont[X] <:<  NOT[NOT[T] with NOT[U]] }
 
   trait NaturalTransformation[F[_], G[_]] {
     def apply[A](f: F[A]): G[A]
@@ -183,6 +290,31 @@ object Evaluation {
       }
     }
 
+    def zip[B, C](xs: Always[B], f: (A, B) => C): Always[C] = {
+      val self = this
+      new Always[C] {
+        override def apply(v1: (C, Always[C]) => Nothing): Nothing = {
+          self.apply((y, ys)=> xs.apply((z, zs)=> v1(f(y, z), ys.zip(zs, f))))
+        }
+      }
+    }
+
+    def zip[B, C](xs: Always[B], f: (A AND B) ~> C): Always[C] = {
+      val self = this
+      new Always[C] {
+        override def apply(v1: (C, Always[C]) => Nothing): Nothing = {
+          self.apply((y, ys)=> xs.apply((z, zs)=> f.apply((k1)=>k1.apply(new (A AND B) {
+            override def apply(k: (A, B) => Nothing): Nothing = {
+              k(y, z)
+            }
+          }),
+            (v: C)=> {
+              v1(v, ys.zip(zs, f))
+            })))
+        }
+      }
+    }
+
     def fold[B](z: B, f: (B AND A) ~> B): Always[B] = {
       val self = this
       new Always[B] {
@@ -194,7 +326,7 @@ object Evaluation {
               }
             }),
             (v: B)=> {
-                v1(v,y.fold(v, f))
+                v1(v, y.fold(v, f))
              }))
         }
       }
@@ -240,8 +372,8 @@ object Evaluation {
   case class ISOLazyStrict[A, B]() extends  ISO[LazilyImplies[A, B], StrictlyImplies[A, B]] {
     override def fw(x: LazilyImplies[A, B]): StrictlyImplies[A, B] = {
       new StrictlyImplies[A, B] {
-        override def apply(v1: AND[A, NOT[B]]): Nothing = {
-          v1.apply((u: A, v: NOT[B])=> x.apply((f: NOT[A])=> f(u), (g:B)=> v(g)))
+        override def apply(v1: A AND NOT[B]): Nothing = {
+          v1.apply((u: A, f: NOT[B])=> x.apply((g: NOT[A])=> g(u), (v: B)=> f(v)))
         }
       }
     }
@@ -250,10 +382,10 @@ object Evaluation {
       new LazilyImplies[A, B] {
         override def apply(v1: (NOT[A]) => Nothing, v2: (B) => Nothing): Nothing = {
           v1(new NOT[A] {
-            override def apply(v1: A): Nothing = {
+            override def apply(x: A): Nothing = {
               y.apply(new (A AND NOT[B]) {
                 override def apply(k: (A, NOT[B]) => Nothing): Nothing = {
-                  k(v1, v2)
+                  k(x, v2)
                 }
               })
             }
@@ -265,21 +397,26 @@ object Evaluation {
 
   case class T1[A]() extends ISO[Always[A], NOT[Eventually[NOT[A]]]] {
 
+    def f(x: Always[A], v1: Eventually[NOT[A]]): Nothing = {
+      v1.apply((k: NOT[A])=> x.apply((y: A, ys: Always[A])=> k(y)), (xs: Eventually[NOT[A]])=> x.apply((y: A, ys: Always[A])=> f(ys, xs) ))
+    }
+
     override def fw(x: Always[A]): NOT[Eventually[NOT[A]]] = new NOT[Eventually[NOT[A]]] {
       override def apply(v1: Eventually[NOT[A]]): Nothing = {
-        v1.apply((k: NOT[A])=>x.apply((y: A, ys: Always[A])=> k(y)), (xs: Eventually[NOT[A]])=>apply(xs))
+         f(x, v1)
       }
     }
 
     override def bw(y: NOT[Eventually[NOT[A]]]): Always[A] = new Always[A] {
-      val me: Always[A] = this
       override def apply(v1: (A, Always[A]) => Nothing): Nothing = {
         val v: Eventually[NOT[A]] = new Eventually[NOT[A]] {
           override def apply(k1: (NOT[A]) => Nothing, k2: (Eventually[NOT[A]]) => Nothing): Nothing = {
              k1(new NOT[A] {
                override def apply(x: A): Nothing = {
                   v1(x, bw(new NOT[Eventually[NOT[A]]] {
-                    override def apply(v1: Eventually[NOT[A]]): Nothing = {k2(v1)}
+                    override def apply(u: Eventually[NOT[A]]): Nothing = {
+                      k2(u)
+                    }
                   }))
                }
              })
@@ -294,7 +431,7 @@ object Evaluation {
     override def fw(e: Eventually[A]): NOT[Always[NOT[A]]] = {
        new NOT[Always[NOT[A]]] {
          override def apply(v1: Always[NOT[A]]): Nothing = {
-           e.apply((x:A)=>v1.apply((k, ks)=>k.apply(x)), (e1: Eventually[A])=> fw(e1).apply(v1))
+           e.apply((x: A)=>v1.apply((k, ks)=> k.apply(x)), (e1: Eventually[A])=> fw(e1).apply(v1))
          }
        }
     }
@@ -370,7 +507,7 @@ object Evaluation {
   // A => (A=>B) => B
   def eval[A, B](x: A, f: A=>B): B = f(x)
   
-  def eval[A, B](x: A, f: A~>B, k: B=>Nothing): Nothing = {
+  def eval[A, B](x: A, f: A~>B, k: NOT[B]): Nothing = {
     f.apply((k1: NOT[A])=>k1(x), k)
   }
 
@@ -490,8 +627,8 @@ object Evaluation {
     }
   }
 
-  def openFile(file: java.io.File): IOException + FileInputStream = {
-    new (IOException + FileInputStream) {
+  def openFile(file: java.io.File): IOException OR FileInputStream = {
+    new (IOException OR FileInputStream) {
       override def apply(v2: (IOException) => Nothing, v1: (FileInputStream) => Nothing): Nothing = {
         try {
           v1(new FileInputStream(file))
@@ -517,7 +654,7 @@ object Evaluation {
   }
 
   def lazyCoapply[B, C](x: C): (C WITHOUT B) OR B = {
-    new ((C WITHOUT B) + B) {
+    new ((C WITHOUT B) OR B) {
       override def apply(k1: (C WITHOUT B) => Nothing, k2: (B) => Nothing): Nothing = {
         k1(new (C WITHOUT B) {
           override def apply(k3: NOT[C] OR B): Nothing = {
@@ -545,7 +682,6 @@ object Evaluation {
       }
     }
   }
-
 
   implicit def lazily[A, B, C](f: (A, B)=>C): (A AND B) ~> C = {
       new ((A AND B) ~> C) {
@@ -575,6 +711,34 @@ object Evaluation {
     }
   }
 
+  def directly[A, B](f: A->B): A=>B = {
+    (x: A)=> {
+      try {
+        f.apply(new (A AND NOT[B]) {
+          override def apply(v1: (A, NOT[B]) => Nothing): Nothing = {
+            v1(x, new NOT[B] {
+              override def apply(v1: B): Nothing = {
+                throw Return(v1)
+              }
+            })
+          }
+        })
+      } catch {
+        case r: Return[B] => r.result
+      }
+    }
+  }
+
+  def directly[A, B](f: A~>B): A=>B = {
+    (x: A)=> {
+      try {
+        f.apply((k) => k(x), (y) => throw Return(y))
+      } catch {
+        case r: Return[B] => r.result
+      }
+    }
+  }
+
   def end(): Nothing = throw Return(())
 
   def run(f: ()=> Unit): Unit = {
@@ -587,7 +751,7 @@ object Evaluation {
 
   def main(argv: Array[String]): Unit = {
 
-    def size[T: (Int or String)#apply](t: T) = {
+    def size[T: (Int or String)#selection](t: T) = {
       t match {
         case i:Int => i
         case j: String => j.length()
@@ -623,17 +787,22 @@ object Evaluation {
     def laz = {
       val f = lazily[String, String](_.toUpperCase)
       val g = lazily[String, String](_.concat("world"))
-      val q = f * f * g
+      val q = f * g * g
+      /*
       q.apply((n: NOT[String]) => n.apply("hello"), (x: String) => {
         println(x)
         sys.exit()
       })
+      */
+      val d = directly(q)
+      println(d("hello"))
     }
 
     def stric = {
       val f = strictly[String, String](_.toUpperCase)
       val g = strictly[String, String](_.concat("world"))
-      val q = f * g
+      val q = f * g * f
+      /*
       q.apply(new (String AND NOT[String]) {
         override def apply(k: (String, NOT[String]) => Nothing): Nothing = {
           k("Hello", new NOT[String] {
@@ -644,6 +813,9 @@ object Evaluation {
           })
         }
       })
+      */
+      val d = directly(q)
+      println(d("Hello"))
     }
     val s = repeat(0)
     val m = s.map((x:Int) => x + 1)
@@ -656,32 +828,37 @@ object Evaluation {
     val n = m.fold(0, (x: Int, y:Int)=> x + y)
 
     println(n)
-    val t1 = new T1[Int]()
-    run(() => {
-      t1.fw(n).apply(now(new NOT[Int] {
-        override def apply(v1: Int): Nothing = {
-          println("Wat? " + v1)
-          end()
-        }
-      }))
-    })
-    val qs = t1.bw(t1.fw(n))
+
+
+
+    val id1 = ID1[Int]()
+    val neg10 = id1.bw(doublyNegate(10))
+    println(neg10)
+
+
+    val t1 = new T1[String]()
+    val qs = t1.bw(t1.fw(repeat("Hello")))
     println(qs)
 
-    val t2 = new T2[Int]()
-    run(() => {
-      t2.fw(now(100)).apply(repeat(new NOT[Int] {
-        override def apply(v1: Int): Nothing = {
-          println("WAT ???" + v1)
-          end()
-        }
-      }))
-    })
-    val vs = t2.bw(t2.fw(now(99)))
-    println(vs)
-    t
+    //t
     laz
     stric
+
+    case class Meal(name: String)
+
+    type Consumer[A] = A => Unit
+    type Diner = Consumer[Meal]
+    type Stream[A] = Always[A]
+
+    type Restaurant = Consumer[Stream[Diner]]
+
+    val diners: Stream[Diner] = repeat((meal: Meal)=> { println("ate: "+meal) })
+    val meals = repeat(Meal("eggs"))
+    val res: Restaurant = (diners: Stream[Diner]) =>  {
+      diners.zip(meals, (d: Diner, m: Meal)=> d(m)).take(10)
+    }
+    res(diners)
+
   }
 
 }
