@@ -1,5 +1,7 @@
 package containers
 
+import containers.AbstractNonsense.Id
+
 /**
  * Created by christopheroliver on 3/15/15.
  */
@@ -13,15 +15,32 @@ trait NaturalTransformation[F[_], G[_]] {
 }
 
 trait Associative[F[_]] extends NaturalTransformation[({type λ[α] = F[F[α]]})#λ, F] {
+  override def apply[X](xs: F[F[X]]): F[X] = flatten(xs)
   def flatten[X](xs: F[F[X]])(implicit f: Functor[F]): F[X]
 }
 
-trait Distributive[F[_], G[_]] extends NaturalTransformation[F, G] {
+trait Pointed[F[_]] extends NaturalTransformation[Id, F] {
+  override def apply[X](xs: Id[X]): F[X] = coextract(xs)
+  def coextract[X](xs: Id[X]): F[X]
+}
+
+trait Coassociative[F[_]] extends NaturalTransformation[F, ({type λ[α] = F[F[α]]})#λ] {
+  override def apply[X](xs: F[X]): F[F[X]] = duplicate(xs)
+  def duplicate[X](xs: F[X]): F[F[X]]
+}
+
+trait Copointed[F[_]] extends NaturalTransformation[F, Id] {
+  override def apply[X](xs: F[X]): Id[X] = extract(xs)
+  def extract[X](xs: F[X]): Id[X]
+}
+
+trait Distributive[F[_], G[_]] extends NaturalTransformation[({type λ[α] = F[G[α]]})#λ, ({type λ[α] = G[F[α]]})#λ] {
+  override def apply[X](xs: F[G[X]]): G[F[X]] = transpose(xs)
   def transpose[X](xs: F[G[X]])(implicit f: Functor[F], g: Functor[G]): G[F[X]]
 }
 
 case class VerticalInterchange[F[_], G[_], H[_]] () {
-  def vertical[X](n1: NaturalTransformation[F, G], n2: NaturalTransformation[G, H]):
+  def compose[X](n1: NaturalTransformation[F, G], n2: NaturalTransformation[G, H]):
   NaturalTransformation[F, H] = {
     new NaturalTransformation[F, H] {
       override def apply[X](f: F[X]): H[X] = {
@@ -35,6 +54,9 @@ case class HorizontalInterchange[F[_], G[_], H[_], I[_]](val f: Functor[F],
                                                          val h: Functor[H]) {
   type FG[X] = F[G[X]]
   type HI[X] = H[I[X]]
+
+  type Monad[F[_]] = (Pointed[F], Associative[F])
+  type Comonad[F[_]] = (Copointed[F], Coassociative[F])
 
   def innerThenOuter(n1: NaturalTransformation[F, H],
                      n2: NaturalTransformation[G, I]): NaturalTransformation[FG, HI] = {
@@ -62,6 +84,8 @@ case class HorizontalInterchange[F[_], G[_], H[_], I[_]](val f: Functor[F],
 object AbstractNonsense {
 
   type ==>[F[_], G[_]] = NaturalTransformation[F, G]
+  
+  type Id[X] = X
 
   val optionFunctor: Functor[Option] = {
     new Functor[Option] {
@@ -79,6 +103,16 @@ object AbstractNonsense {
     }
   }
 
+  val listMonad =
+    (new Pointed[List] {
+      override def coextract[X](xs: Id[X]): List[X] = List(xs)
+    },
+    new Associative[List] {
+      override def flatten[X](xs: List[List[X]])(implicit f: Functor[List]): List[X] = {
+        xs.flatten
+      }
+    })
+
   def main(argv: Array[String]): Unit = {
 
     val optionToList: Option ==> List = {
@@ -92,7 +126,7 @@ object AbstractNonsense {
       }
     }
 
-    val listToOption: NaturalTransformation[List, Option] = {
+    val listToOption: List ==> Option = {
       new NaturalTransformation[List, Option] {
         override def apply[X](xs: List[X]): Option[X] = {
           if (xs.length > 0) Some(xs.head) else None
@@ -107,13 +141,13 @@ object AbstractNonsense {
     }
     val vert = new VerticalInterchange[List, List, List]()
     val horiz = new HorizontalInterchange[List, List, List, List](listFunctor, listFunctor)
-    val id1 = vert.vertical(reverse, reverse)
+    val id1 = vert.compose(reverse, reverse)
     val comm = HorizontalInterchange[Option, List, List, Option](optionFunctor, listFunctor)
     val transpose = comm.outerThenInner(optionToList, listToOption)
     val xs = List("a", "b", "c")
     println(id1(xs))
-    println(transpose(Some(List("x"))))
-    println(comm.innerThenOuter(optionToList, listToOption).apply(Some(List("y"))))
-    //println(horiz.innerThenOuter(List(List(xs))))
+    val ys = Some(List("y"))
+    println(transpose(ys))
+    println(comm.innerThenOuter(optionToList, listToOption).apply(ys))
   }
 }

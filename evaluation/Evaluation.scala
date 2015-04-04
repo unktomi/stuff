@@ -749,6 +749,43 @@ object Evaluation {
     }
   }
 
+
+  type Lax[A] = Eventually[Always[A]]
+
+  def lax[A](x: A): Lax[A] = now(repeat(x))
+
+  /// (A and eventually always B) implies eventually always (A and B)
+
+  /*
+
+  def transpose[A, B](xs: A AND Lax[B]): Lax[A AND B] = {
+    new Lax[A AND B] {
+      override def apply(v1: (Always[A AND B]) => Nothing, v2: (Eventually[Always[A AND B]]) => Nothing): Nothing = {
+        xs.apply((x: A, y: Lax[B])=> y.apply((s)=> v1(s.map((z: B)=> new (A AND B) {
+          override def apply(v1: (A, B) => Nothing): Nothing = {
+            v1(x, z)
+          }
+        })), (y: Eventually[Always[B]])=> y.map(new (Always[B] ~> Always[A AND B]) {
+          override def apply(v1: (NOT[Always[B]]) => Nothing, v2: (Always[AND[A, B]]) => Nothing): Nothing = {
+              v1(new NOT[Always[B]] {
+                override def apply(v1: Always[B]): Nothing = {
+                  v2(v1.map((z: B) => {
+                    new (A AND B) {
+                      override def apply(v1: (A, B) => Nothing): Nothing = {
+                        v1(x, z)
+                      }
+                    }
+                  }))
+                }
+              })
+          }
+        })))
+      }
+    }
+  }
+
+  */
+
   def main(argv: Array[String]): Unit = {
 
     def size[T: (Int or String)#selection](t: T) = {

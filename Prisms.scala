@@ -154,7 +154,26 @@ case class Except[X](exception: X) extends (X - Unit) {
   override def raise(x: Unit): X = exception
 
   // inject A into E
-  override def handle(y: X): Unit + X = if (y == exception) Left(()) else Right(y)
+  override def handle(y: X): Unit + X = y match {
+    case exception => Left(())
+    case _ => Right(y)
+  }
+}
+
+// X - 2
+case class Except2[X](yes: X, no: X) extends (X - Boolean) {
+  // throw = dual of Lens.get
+  override def raise(x: Boolean): X = x match {
+    case false => no
+    case true => yes
+  }
+
+  // inject A into E
+  override def handle(y: X): Boolean + X = y match {
+    case yes => Left(true)
+    case no => Left(false)
+    case _ => Right(y)
+  }
 
 }
 
@@ -271,53 +290,6 @@ object Prisms {
        }
     }
   }
-
-  case class Complex[A, B, C, D] extends ISO[(Either[A, B], Either[C, D]),
-    ((A, C) - (B, D), Either[(A, B), (A, C)])] {
-    override def fw(x: (Either[A, B], Either[C, D])): (-[(A, C), (B, D)], Either[(A, B), (A, C)]) = {
-      (new ((A, C) - (B, D)) {
-        // throw = dual of Lens.get
-        override def raise(u: (B, D)): (A, C) = {
-          x._1 match {
-            case Left(a) => x._2 match {
-              case Left(c) =>  (a, c)
-              case Right(d) =>  ???  // (a, d)
-            }
-            case Right(b) => x._2 match {
-              case Left(c) => ??? // (b, c)
-              case Right(d) => ??? // (b, d)
-            }
-          }
-        }
-
-        // inject A into E
-        override def handle(y: (A, C)): (B, D) + (A, C) = {
-          x._1 match {
-            case Left(a) => x._2 match {
-              case Left(c) =>  Right((a, c))
-              case Right(d) => Right(y)// (a, d)
-            }
-            case Right(b) => x._2 match {
-              case Left(c) => Right(y) // (b, c)
-              case Right(d) => Left((b, d)) // (b, d)
-            }
-          }
-
-        }
-      },
-        x._1 match {
-          case Left(a) => x._2 match {
-            case Left(c) => Right((a, c))
-          }
-        }
-        )
-    }
-
-    override def bw(y: (-[(A, C), (B, D)], Either[(A, B), (A, C)])): (Either[A, B], Either[C, D]) = {
-       ???
-    }
-  }
-
 
 
   def main(argv: Array[String]): Unit = {
