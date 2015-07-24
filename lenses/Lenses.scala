@@ -1,11 +1,11 @@
-package main.scala.test.lenses
+//package main.scala.test.lenses
 
 /**
  * Created by christopheroliver on 10/18/14.
  */
-
+package lenses
 import Lenses._
-//import main.scala.test.lenses.Prisms._
+import lenses.Prisms
 import scala.collection.mutable
 
 trait Functor[F[_]] {
@@ -224,7 +224,7 @@ object Lenses {
     }
   }
 
-  import Prisms._
+  import lenses.Prisms._
 
   type Observer[A] = Unit - A
 

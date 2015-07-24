@@ -1,13 +1,23 @@
 package containers
 
 import containers.AbstractNonsense.Id
-
-/**
+import lenses.Prisms._
+/*
  * Created by christopheroliver on 3/15/15.
  */
 
-trait Functor[F[_]] {
+trait ExponentialFunctor[F[_]] {
+  def xmap[A, B](xs: F[A], f: A=>B, g: B=>A): F[B]
+}
+
+trait Functor[F[_]] extends ExponentialFunctor[F] {
   def map[A, B](xs: F[A], f: A=>B): F[B]
+  override def xmap[A, B](xs: F[A], f: A=>B, g:B=>A): F[B] = map(xs, f)
+}
+
+trait ContraFunctor[F[_]] extends ExponentialFunctor[F] {
+  def contramap[A, B](xs: F[B], f: A=>B): F[A]
+  override def xmap[A, B](xs: F[A], f: A=>B, g:B=>A): F[B] = contramap(xs, g)
 }
 
 trait NaturalTransformation[F[_], G[_]] {
@@ -112,6 +122,45 @@ object AbstractNonsense {
         xs.flatten
       }
     })
+
+  trait Observer[A] {
+    var last: Option[A] = None
+    def onNext(x: A): Unit
+    def getLastObserved: Option[A] = last
+    def raise(x: A): Unit = { last = Some(x); onNext(x) }
+    def handle(y: Unit): Either[Unit, A] = getLastObserved match {
+      case Some(x) => Right(x)
+      case _ => Left(())
+    }
+  }
+
+  trait Observable[A] extends Observer[Observer[A]] {
+    def subscribe(x: Observer[A]): Unit = onNext(x)
+  }
+
+  val observerFunctor = new ContraFunctor[Observer] {
+    override def contramap[A, B](xs: Observer[B], f: (A) => B): Observer[A] = {
+      new Observer[A] {
+        override def onNext(x: A): Unit = {
+          xs.onNext(f(x))
+        }
+      }
+    }
+  }
+
+  val observableFunctor = new Functor[Observable] {
+    override def map[A, B](xs: Observable[A], f: (A) => B): Observable[B] = {
+      new Observable[B] {
+        override def onNext(y: Observer[B]): Unit = {
+          xs.onNext(new Observer[A] {
+            override def onNext(x: A): Unit = {
+              y.onNext(f(x))
+            }
+          })
+        }
+      }
+    }
+  }
 
   def main(argv: Array[String]): Unit = {
 

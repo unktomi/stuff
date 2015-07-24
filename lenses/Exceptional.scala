@@ -1,4 +1,4 @@
-package main.scala.test.lenses
+package lenses
 
 /**
  * Created by christopheroliver on 10/23/14.

@@ -1,4 +1,4 @@
-package main.scala.test.lenses
+package lenses
 
 /**
  * Created by christopheroliver on 10/18/14.
@@ -6,6 +6,7 @@ package main.scala.test.lenses
 
 
 import Prisms._
+
 
 trait AbstractRaiser[T, A, B] {
   def raise(x: B): T
