@@ -8,11 +8,7 @@ import java.io.{File, IOException, FileInputStream}
 import Evaluation._
 import scala.collection.mutable.ListBuffer
 
-// Isomorphism between A and B
-trait ISO[A, B] {
-  def fw(x: A): B
-  def bw(y: B): A
-}
+
 
 // A IMPLIES B = (NOT A) OR B
 trait LazilyImplies[A, B] extends (NOT[A] OR B) {
@@ -862,9 +858,9 @@ object Evaluation {
     } yield j + 1
     println(q)
 
-    val n = m.fold(0, (x: Int, y:Int)=> x + y)
+    //val n = m.fold(0, (x: Int, y:Int)=> x + y)
 
-    println(n)
+    //println(n)
 
 
 

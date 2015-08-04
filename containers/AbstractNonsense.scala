@@ -2,6 +2,14 @@ package containers
 
 import containers.AbstractNonsense.Id
 import lenses.Prisms._
+
+import scala.collection.mutable
+
+trait Monoid[A] {
+  def empty: A
+  def add(x: A, y: A): A
+}
+
 /*
  * Created by christopheroliver on 3/15/15.
  */
@@ -26,7 +34,7 @@ trait NaturalTransformation[F[_], G[_]] {
 
 trait Associative[F[_]] extends NaturalTransformation[({type λ[α] = F[F[α]]})#λ, F] {
   override def apply[X](xs: F[F[X]]): F[X] = flatten(xs)
-  def flatten[X](xs: F[F[X]])(implicit f: Functor[F]): F[X]
+  def flatten[X](xs: F[F[X]]): F[X]
 }
 
 trait Pointed[F[_]] extends NaturalTransformation[Id, F] {
@@ -46,7 +54,7 @@ trait Copointed[F[_]] extends NaturalTransformation[F, Id] {
 
 trait Distributive[F[_], G[_]] extends NaturalTransformation[({type λ[α] = F[G[α]]})#λ, ({type λ[α] = G[F[α]]})#λ] {
   override def apply[X](xs: F[G[X]]): G[F[X]] = transpose(xs)
-  def transpose[X](xs: F[G[X]])(implicit f: Functor[F], g: Functor[G]): G[F[X]]
+  def transpose[X](xs: F[G[X]]): G[F[X]]
 }
 
 case class VerticalInterchange[F[_], G[_], H[_]] () {
@@ -91,7 +99,149 @@ case class HorizontalInterchange[F[_], G[_], H[_], I[_]](val f: Functor[F],
 
 }
 
+trait Ran[G[_], H[_], A] {
+  def apply[B](f: A => G[B]): H[B]
+}
+
+trait Lan[G[_], H[_], A] {
+  def apply[B]: (G[B] => A, H[B])
+}
+
+trait Yoneda[F[_], A] extends Ran[Id, F, A] {
+  override def apply[B](f: A => B): F[B]
+}
+
+trait Coyoneda[F[_], A] extends Lan[Id, F, A] {
+  override def apply[B]: (B => A, F[B])
+  def map[C](f: A=>C): Coyoneda[F, C] = {
+    val self = this
+    new Coyoneda[F, C] {
+      override def apply[B]: ((B) => C, F[B]) = {
+        val g = self.apply[B]
+        (f.compose(g._1), g._2)
+      }
+    }
+  }
+}
+
+case class Writer[A, W](output: W, value: A)(implicit w: Monoid[W]) {
+  def map[B](f: A=>B): Writer[B, W] = {
+    new Writer[B, W](output, f(value))
+  }
+  def flatMap[B](f: A=> Writer[B, W]): Writer[B, W] = {
+    val w1 = f(value)
+    new Writer[B, W](w.add(w1.output, output), w1.value)
+  }
+}
+
+abstract class Cowriter[A, W](implicit w: Monoid[W]) extends (W=>A) {
+  def extract: A = apply(w.empty)
+  def map[B](f: A=>B): Cowriter[B, W] = {
+    val self = this
+    new Cowriter[B, W] {
+      override def apply(v1: W): B = {
+        f(self(v1))
+      }
+    }
+  }
+  def flatMap[B](f: A=>Cowriter[B, W]): Cowriter[B, W] = {
+    coflatMap((x: Cowriter[A, W])=> f(x.extract).extract)
+  }
+  def coflatMap[B](f: Cowriter[A, W] => B): Cowriter[B, W] = {
+    val self = this
+    new Cowriter[B, W] {
+      override def apply(v1: W): B = {
+        f(new Cowriter[A, W] {
+          override def apply(v2: W): A = {
+            self.apply(w.add(v1, v2))
+          }
+        })
+      }
+    }
+  }
+}
+
+
+
+// Codensity Monad
+trait Codensity[F[_], A] extends Ran[F, F, A] {
+  override def apply[R](k: A=>F[R]): F[R]
+  def map[B](f: A=>B): Codensity[F, B] = {
+    val self = this
+    new Codensity[F, B] {
+      override def apply[R](k1: (B) => F[R]): F[R] = {
+        self.apply((x: A)=> {
+          k1(f(x))
+        })
+      }
+    }
+  }
+  def flatMap[B](f: A=>Codensity[F, B]): Codensity[F, B] = {
+    val self = this
+    new Codensity[F, B] {
+      override def apply[R](k1: (B) => F[R]): F[R] = {
+        self.apply((x: A)=> {
+          f(x).apply((y: B)=>k1(y))
+        })
+      }
+    }
+  }
+}
+
+// Density Comonad
+trait Density[F[_], A] extends Lan[F, F, A] {
+  override def apply[B]: ((F[B]) => A, F[B])
+  def extract: A = { val j = apply[A]; j._1(j._2) }
+  def map[B](f: A=>B): Density[F, B] = {
+    val self = this
+    new Density[F, B] {
+      override def apply[C]: ((F[C]) => B, F[C]) = {
+        val j = self.apply[C]
+        (f.compose(j._1), j._2)
+      }
+    }
+  }
+  def coflatMap[B](f: Density[F, A]=>B): Density[F, B] = {
+    val self = this
+    new Density[F, B] {
+      override def apply[C]: ((F[C]) => B, F[C]) = {
+        val j = self.apply[C]
+        ((xs:F[C])=>f(self), j._2)
+      }
+    }
+  }
+}
+
+
+trait RxSubject extends Density[({type G[A] = A=>Unit})#G, Unit] {
+  override def apply[B]: ((B => Unit) => Unit, B => Unit) = {
+    val subscribers = new mutable.WeakHashMap[B=>Unit, Unit]
+    ((subscriber: B => Unit)=> subscribers.put(subscriber, ()), (msg: B)=> for { sub <- subscribers.keySet } sub.apply(msg))
+  }
+}
+
+case class SubjectW[W](implicit m: Monoid[W]) extends Density[({type λ[α] = α => W})#λ, W] {
+  override def apply[B]: (((B) => W) => W, (B) => W) = {
+    val subscribers = new mutable.WeakHashMap[B=>W, W]
+    ((k: B=>W)=> {subscribers.put(k, m.empty); m.empty},
+      (x: B)=> {
+        var w0 = m.empty
+        for {
+          (sub, w) <- subscribers
+        } {
+          w0 = m.add(sub(x), w)
+        }
+        w0
+      })
+  }
+}
+
 object AbstractNonsense {
+
+  def UnitMonoid: Monoid[Unit] = new Monoid[Unit] {
+    def empty: Unit = ()
+    def add(x: Unit, y: Unit): Unit = ()
+  }
 
   type ==>[F[_], G[_]] = NaturalTransformation[F, G]
   
@@ -118,7 +268,7 @@ object AbstractNonsense {
       override def coextract[X](xs: Id[X]): List[X] = List(xs)
     },
     new Associative[List] {
-      override def flatten[X](xs: List[List[X]])(implicit f: Functor[List]): List[X] = {
+      override def flatten[X](xs: List[List[X]]): List[X] = {
         xs.flatten
       }
     })
@@ -198,5 +348,12 @@ object AbstractNonsense {
     val ys = Some(List("y"))
     println(transpose(ys))
     println(comm.innerThenOuter(optionToList, listToOption).apply(ys))
+
+    def subject[A] = new RxSubject {}.apply[A]
+    val s = subject[Int]
+    s._1((x: Int)=>println("received "+x))
+    s._2(100)
   }
+
+
 }

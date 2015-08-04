@@ -5,8 +5,9 @@
  */
 package lenses
 import Lenses._
-import lenses.Prisms
+
 import scala.collection.mutable
+import evaluation.ISO
 
 trait Functor[F[_]] {
   def map[A, B](xs: F[A], f: A=>B): F[B]
@@ -333,7 +334,6 @@ object Lenses {
                 gc(this)
               }
             }
-
             // inject A into E
             override def handle(y: Unit): A + Unit = Right(())
           })
@@ -364,8 +364,8 @@ object Lenses {
             // inject A into E
             override def handle(y: Unit): B + Unit = Right(())
           }
-          signal.set((), test)
-          self.set((), new Observer[A] {
+          signal.subscribe(test)
+          self.subscribe(new Observer[A] {
             var taken = 0
             override def raise(x: A): Unit = {
               if (!done) {
@@ -390,7 +390,7 @@ object Lenses {
       val self = this
       new Observable[A] {
         override def set(nothing: Unit, xs: Observer[A]): Unit = {
-          self.set(nothing: Unit, new Observer[A] {
+          self.subscribe(new Observer[A] {
             override def raise(x: A): Unit = {
               if (p(x)) xs.raise(x)
             }
@@ -492,29 +492,7 @@ object Lenses {
   }
 
   def nop[A] = new Observable[A] {
-    override def set(nothing: Unit, x: Observer[A]): Unit = {}
-  }
-
-  trait I_ISO[X] extends ISO[(X, X), Prism[Nothing, Unit]] {
-    class PairExc[X](val p: (X, X)) extends Exception {}
-    override def bw(y: Nothing - Unit): (X, X) = {
-      try {
-        y.raise(())
-      } catch {
-        case e: PairExc[X] => e.p
-      }
-    }
-
-    override def fw(x: (X, X)): Nothing - Unit = new (Nothing - Unit)  {
-      // inject A into E
-      override def handle(y: Nothing): Unit + Nothing = {
-         Right(y)
-      }
-      // throw = dual of Lens.get
-      override def raise(u: Unit): Nothing = {
-        throw new PairExc(x)
-      }
-    }
+    override def set(nothing: Unit, x: Observer[A]): Unit = ()
   }
 
   def main(argv: Array[String]): Unit = {
@@ -611,6 +589,5 @@ object Lenses {
 
     mouseSim
   }
-
 
 }
