@@ -32,7 +32,7 @@ trait NaturalTransformation[F[_], G[_]] {
   def apply[X](xs: F[X]): G[X]
 }
 
-trait Associative[F[_]] extends NaturalTransformation[({type λ[α] = F[F[α]]})#λ, F] {
+trait Associative[F[_]] extends NaturalTransformation[({type G[A] = F[F[A]]})#G, F] {
   override def apply[X](xs: F[F[X]]): F[X] = flatten(xs)
   def flatten[X](xs: F[F[X]]): F[X]
 }
@@ -42,7 +42,7 @@ trait Pointed[F[_]] extends NaturalTransformation[Id, F] {
   def coextract[X](xs: Id[X]): F[X]
 }
 
-trait Coassociative[F[_]] extends NaturalTransformation[F, ({type λ[α] = F[F[α]]})#λ] {
+trait Coassociative[F[_]] extends NaturalTransformation[F, ({type G[A] = F[F[A]]})#G] {
   override def apply[X](xs: F[X]): F[F[X]] = duplicate(xs)
   def duplicate[X](xs: F[X]): F[F[X]]
 }
@@ -52,7 +52,7 @@ trait Copointed[F[_]] extends NaturalTransformation[F, Id] {
   def extract[X](xs: F[X]): Id[X]
 }
 
-trait Distributive[F[_], G[_]] extends NaturalTransformation[({type λ[α] = F[G[α]]})#λ, ({type λ[α] = G[F[α]]})#λ] {
+trait Distributive[F[_], G[_]] extends NaturalTransformation[({type H[A] = F[G[A]]})#H, ({type I[A] = G[F[A]]})#I] {
   override def apply[X](xs: F[G[X]]): G[F[X]] = transpose(xs)
   def transpose[X](xs: F[G[X]]): G[F[X]]
 }
@@ -220,7 +220,7 @@ trait RxSubject extends Density[({type G[A] = A=>Unit})#G, Unit] {
   }
 }
 
-case class SubjectW[W](implicit m: Monoid[W]) extends Density[({type λ[α] = α => W})#λ, W] {
+case class SubjectW[W](implicit m: Monoid[W]) extends Density[({type G[A] = A=>W})#G, W] {
   override def apply[B]: (((B) => W) => W, (B) => W) = {
     val subscribers = new mutable.WeakHashMap[B=>W, W]
     ((k: B=>W)=> {subscribers.put(k, m.empty); m.empty},
