@@ -1,7 +1,7 @@
 package containers
 
 import containers.AbstractNonsense.Id
-import lenses.Prisms._
+
 
 import scala.collection.mutable
 
@@ -23,6 +23,31 @@ trait Functor[F[_]] extends ExponentialFunctor[F] {
   override def xmap[A, B](xs: F[A], f: A=>B, g:B=>A): F[B] = map(xs, f)
 }
 
+trait Monad[F[_]] extends Functor[F] {
+  def unit[A](x: A): F[A]
+  def join[A](xs: F[F[A]]): F[A] = flatMap(xs, (x:F[A])=>x)
+  def flatMap[A, B](xs: F[A], f: A=>F[B]): F[B] = join(map(xs, f))
+}
+
+trait Comonad[F[_]] extends Functor[F] {
+  def extract[A](xs: F[A]): A
+  def duplicate[A](xs: F[A]): F[F[A]] = coflatMap[A, F[A]](xs, (x:F[A])=>x)
+  def coflatMap[A, B](xs: F[A], f: F[A]=>B): F[B] = map(duplicate(xs), f)
+}
+ /*
+trait MonadFail[F[_]] extends Monad[F] {
+  def raise[A](x: A): F[A]
+}
+
+trait MonadExc[F[_]] extends MonadFail[F] {
+  def handle[A](xs: F[A]): Either[A, F[A]]
+}
+
+trait ComonadState[F[_]] extends Comonad[F] {
+  def get[A](xs: F[A]): A
+  def put[A](xs: F[A], x: A): F[A]
+}
+ */
 trait ContraFunctor[F[_]] extends ExponentialFunctor[F] {
   def contramap[A, B](xs: F[B], f: A=>B): F[A]
   override def xmap[A, B](xs: F[A], f: A=>B, g:B=>A): F[B] = contramap(xs, g)
@@ -99,12 +124,29 @@ case class HorizontalInterchange[F[_], G[_], H[_], I[_]](val f: Functor[F],
 
 }
 
+// Right Kan Extension
+
 trait Ran[G[_], H[_], A] {
   def apply[B](f: A => G[B]): H[B]
 }
 
+
+// Left Kan Extension
+
+trait LanTuple[G[_], H[_], A, B] {
+  def peek(xs: G[B]): A
+  def pos: H[B]
+  def map[C](f: A=>C): LanTuple[G, H, C, B] = {
+    val self = this
+    new LanTuple[G, H, C, B] {
+      override def peek(xs: G[B]): C = f(self.peek(xs))
+      override def pos: H[B] = self.pos
+    }
+  }
+}
+
 trait Lan[G[_], H[_], A] {
-  def apply[B]: (G[B] => A, H[B])
+  def apply: LanTuple[G, H, A, _]
 }
 
 trait Yoneda[F[_], A] extends Ran[Id, F, A] {
@@ -112,13 +154,14 @@ trait Yoneda[F[_], A] extends Ran[Id, F, A] {
 }
 
 trait Coyoneda[F[_], A] extends Lan[Id, F, A] {
-  override def apply[B]: (B => A, F[B])
+
+  override def apply: LanTuple[Id, F, A, _]
+
   def map[C](f: A=>C): Coyoneda[F, C] = {
     val self = this
     new Coyoneda[F, C] {
-      override def apply[B]: ((B) => C, F[B]) = {
-        val g = self.apply[B]
-        (f.compose(g._1), g._2)
+      override def apply: LanTuple[Id, F, C, _] = {
+        self.apply.map(f)
       }
     }
   }
@@ -161,7 +204,9 @@ abstract class Cowriter[A, W](implicit w: Monoid[W]) extends (W=>A) {
   }
 }
 
-
+// Functional A=>B
+// Imperative A=>F[B]
+// Reactive F[A]=>B
 
 // Codensity Monad
 trait Codensity[F[_], A] extends Ran[F, F, A] {
@@ -189,52 +234,65 @@ trait Codensity[F[_], A] extends Ran[F, F, A] {
 }
 
 // Density Comonad
+
+trait DensityTuple[F[_], A, B] extends LanTuple[F, F, A, B] {
+  def extract: A = peek(pos)
+  def coflatMap[C](f: DensityTuple[F, A, B]=>C): DensityTuple[F, C, B] = {
+    val self = this
+    new DensityTuple[F, C, B] {
+      override def peek(xs: F[B]): C = {
+        f(self)
+      }
+      override def pos: F[B] = self.pos
+    }
+  }
+  override def map[C](f: A => C): DensityTuple[F, C, B] = {
+    val self = this
+    new DensityTuple[F, C, B] {
+      override def peek(xs: F[B]): C = {
+        f(self.peek(xs))
+      }
+      override def pos: F[B] = self.pos
+    }
+  }
+}
+
 trait Density[F[_], A] extends Lan[F, F, A] {
-  override def apply[B]: ((F[B]) => A, F[B])
-  def extract: A = { val j = apply[A]; j._1(j._2) }
+  override def apply: DensityTuple[F, A, _]
+  def extract: A = { val j = apply; j.extract }
   def map[B](f: A=>B): Density[F, B] = {
     val self = this
     new Density[F, B] {
-      override def apply[C]: ((F[C]) => B, F[C]) = {
-        val j = self.apply[C]
-        (f.compose(j._1), j._2)
+      override def apply: DensityTuple[F, B, _] = {
+        val j = self.apply
+        j.map(f)
       }
     }
   }
+
+  def duplicate: Density[F, Density[F, A]] = {
+    coflatMap(identity(_))
+  }
+
+  def flatMap[B](f: A=>Density[F, B]): Density[F, B] = {
+    map(f).extract
+  }
+
   def coflatMap[B](f: Density[F, A]=>B): Density[F, B] = {
     val self = this
     new Density[F, B] {
-      override def apply[C]: ((F[C]) => B, F[C]) = {
-        val j = self.apply[C]
-        ((xs:F[C])=>f(self), j._2)
+      override def apply: DensityTuple[F, B, _] = {
+        val d = self.apply
+        d.coflatMap((t)=>f(self))
       }
     }
   }
 }
 
-
-trait RxSubject extends Density[({type G[A] = A=>Unit})#G, Unit] {
-  override def apply[B]: ((B => Unit) => Unit, B => Unit) = {
-    val subscribers = new mutable.WeakHashMap[B=>Unit, Unit]
-    ((subscriber: B => Unit)=> subscribers.put(subscriber, ()), (msg: B)=> for { sub <- subscribers.keySet } sub.apply(msg))
-  }
+trait Iterator[F[_], A] extends Codensity[({type G[A] = Density[F, A]})#G, A] {
+  override def apply[R](k: (A) => Density[F, R]): Density[F, R]
 }
 
-case class SubjectW[W](implicit m: Monoid[W]) extends Density[({type G[A] = A=>W})#G, W] {
-  override def apply[B]: (((B) => W) => W, (B) => W) = {
-    val subscribers = new mutable.WeakHashMap[B=>W, W]
-    ((k: B=>W)=> {subscribers.put(k, m.empty); m.empty},
-      (x: B)=> {
-        var w0 = m.empty
-        for {
-          (sub, w) <- subscribers
-        } {
-          w0 = m.add(sub(x), w)
-        }
-        w0
-      })
-  }
-}
 
 object AbstractNonsense {
 
@@ -311,7 +369,51 @@ object AbstractNonsense {
       }
     }
   }
+  /*
+  def eitherMonadExc[A, B] = new MonadExc[({type G[A] = Either[A, B]})#G] {
+    override def handle[A](xs: Either[A, B]): Either[A, Either[A, B]] = {
+      xs match {
+        case Left(x) => Left(x)
+        case Right(y) => Right(xs)
+      }
+    }
 
+    override def raise[A](x: A): Either[A, B] = Left(x)
+
+    override def unit[A](x: A): Either[A, B] = Left(x)
+
+    override def map[A, C](xs: Either[A, B], f: (A) => C): Either[C, B] = {
+      xs match {
+        case Left(x) => Left(f(x))
+        case Right(y) => Right(y)
+      }
+    }
+  }
+
+  def listMonoid = new Monoid[List] {
+    override def add(x: List, y: List): List = x ++ y
+    override def empty: List = List()
+  }
+
+  def unitMonoid = new Monoid[Unit] {
+    override def add(x: Unit, y: Unit): Unit = ()
+    override def empty: Unit = ()
+  }
+
+  type StateType[S] = ({type G[A] = S=>(S, A)})#G
+
+  type PairType[B] = ({type G[A] = (A, B)})#G
+
+  def pairCommonadState[A, B]: ComonadState[PairType[B]] =
+    new ComonadState[({type G[A] = (A, B)})#G] {
+      override def get[A](xs: (A, B)): A = xs._1
+      override def put[A](xs: (A, B), x: A): (A, B) = (x, xs._2)
+      override def map[A, C](xs: (A, B), f: (A) => C): (C, B) = {
+        (f(xs._1), xs._2)
+      }
+      override def extract[A](xs: (A, B)): A = get(xs)
+    }
+     */
   def main(argv: Array[String]): Unit = {
 
     val optionToList: Option ==> List = {
@@ -348,12 +450,62 @@ object AbstractNonsense {
     val ys = Some(List("y"))
     println(transpose(ys))
     println(comm.innerThenOuter(optionToList, listToOption).apply(ys))
-
-    def subject[A] = new RxSubject {}.apply[A]
-    val s = subject[Int]
-    s._1((x: Int)=>println("received "+x))
-    s._2(100)
+    density
   }
 
+  def codensityMonad[F[_]](implicit m: Monad[F]): Monad[({type G[A] = Codensity[F, A]})#G] = {
+    new Monad[({type G[A] = Codensity[F, A]})#G] {
+      override def unit[A](x: A): Codensity[F, A] = codense(x)(m)
+      override def map[A, B](xs: Codensity[F, A], f: (A) => B): Codensity[F, B] = {
+        xs.map(f)
+      }
+    }
+  }
+
+  def density: Unit = {
+    val w: Comonad[List] = new Comonad[List] {
+      override def extract[A](xs: List[A]): A = xs.head
+      override def map[A, B](xs: List[A], f: (A) => B): List[B] = xs.map(f)
+    }
+    val m: Monad[List] = new Monad[List] {
+      override def unit[A](x: A): List[A] = List(x)
+      override def map[A, B](xs: List[A], f: (A) => B): List[B] = xs.map(f)
+    }
+    val d = dense(List(1, 2, 3))(w)
+    println(d.extract)
+    val z = codense(1)(m)
+
+    val it = iter(List(1, 2, 3))(w)
+
+
+  }
+
+  def iter[F[_], A](xs: F[A])(implicit w: Comonad[F]): Iterator[F, A] = {
+    new Iterator[F, A] {
+      override def apply[R](k: (A) => Density[F, R]): Density[F, R] = {
+        dense(xs).flatMap(k)
+      }
+    }
+  }
+
+  def codense[F[_], A](x: A)(implicit w: Monad[F]): Codensity[F, A] = {
+    new Codensity[F, A] {
+      override def apply[R](k: (A) => F[R]): F[R] = {
+        w.flatMap(w.unit(x), k)
+      }
+    }
+  }
+
+
+  def dense[F[_], A](xs: F[A])(implicit w: Comonad[F]): Density[F, A] = {
+    new Density[F, A] {
+      override def apply: DensityTuple[F, A, _] = {
+        new DensityTuple[F, A, A] {
+          override def peek(xs: F[A]): A = w.extract(xs)
+          override def pos: F[A] = xs
+        }
+      }
+    }
+  }
 
 }

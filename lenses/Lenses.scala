@@ -423,14 +423,14 @@ object Lenses {
 
   case class Subject[A]() extends Observable[A] with (Unit / (Unit - A)) {
 
-    val subscribers = new mutable.WeakHashMap[(Unit - A), Unit]
+    val later = new mutable.WeakHashMap[Unit - A, Unit]
 
-    val u = new (Unit - A) {
+    val now: Unit - A = new (Unit - A) {
       var last: Option[A] = None
       // throw = dual of Lens.get
       override def raise(x: A): Unit = {
         last = Some(x)
-        for { j <- subscribers.keySet } j.raise(x)
+        for { j <- later.keySet } j.raise(x)
       }
 
       // inject A into E
@@ -442,21 +442,21 @@ object Lenses {
       }
       // hacks needed to satisfy lens laws
       override def equals(obj: scala.Any): Boolean = {
-        if (super.equals(obj)) return true
+        if (obj == now) return true
         obj match {
-          case u: (Unit - A) => subscribers.keySet.contains(u)
+          case u: (Unit - A) => later.keySet.contains(u)
         }
         return false
       }
     }
 
     override def get(x: Unit): Unit - A = {
-       u
+       now
     }
 
     override def set(x: Unit, y: Unit - A): Unit = {
-      if (u == y) return ()
-      subscribers.put(y, ())
+      if (now == y) return ()
+      later.put(y, ())
       if (!y.isInstanceOf[WeakObserver[A]]) {
         addGCRoot(y, this)
       }
