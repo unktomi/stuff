@@ -167,6 +167,68 @@ trait Coyoneda[F[_], A] extends Lan[Id, F, A] {
   }
 }
 
+// Constant Functor
+case class Constant[C, A](val const: C) {
+  def map[B](f: A=>B): Constant[C, B] = {
+    Constant[C, B](const)
+  }
+}
+
+// Continuation Monad = Ran[Constant[R], Constant[R], A]
+
+case class Cont[R, A](k: (A=>R)=>R) extends Ran[({type G[X] = Constant[R, X]})#G, ({type G[X] = Constant[R, X]})#G, A] {
+  override def apply[B](f: (A) => Constant[R, B]): Constant[R, B] = {
+    Constant(k((x:A)=>f(x).const))
+  }
+  
+  def map[B](f: A=>B): Cont[R, B] = {
+    Cont[R, B]((k1: B=>R)=>k((x:A)=>k1(f(x))))
+  }
+
+  def flatMap[B](f: A=>Cont[R, B]): Cont[R, B] = {
+    Cont[R, B]((k1: B=>R)=>k((x:A)=> { val c = f(x); c.k(k1) }))
+  }
+}
+
+// Cocontinuation Comonad = Lan[Constant[R], Constant[R], A]
+case class Cocont[R, A] (get: R, set: R=>A) extends Lan[({type G[X] = Constant[R, X]})#G, ({type G[X] = Constant[R, X]})#G, A] {
+
+  override def apply: LanTuple[({type G[X] = Constant[R, X]})#G, ({type G[X] = Constant[R, X]})#G, A, Nothing] = {
+    new LanTuple[({type G[X] = Constant[R, X]})#G, ({type G[X] = Constant[R, X]})#G, A, Nothing] {
+      override def peek(xs: Constant[R, Nothing]): A = set(xs.const)
+      override def pos: Constant[R, Nothing] = Constant(get)
+    }
+  }
+
+  def extract: A = {
+    val t = apply
+    t.peek(t.pos)
+  }
+
+  def map[B](f: A=>B): Cocont[R, B] = {
+    Cocont[R, B](get, set.andThen(f))
+  }
+}
+
+// Free Monad of a functor F = Pure A or Impure F[Free[F, A]]
+trait Free[F[_], A] {
+  def map[B](f: A=>B): Free[F, B]
+  def flatMap[B](f: A=>Free[F, B]): Free[F, B]
+}
+
+case class Pure[F[_], A](x: A) extends Free[F, A] {
+  def map[B](f: A=>B): Free[F, B] = Pure(f(x))
+  def flatMap[B](f: A=>Free[F, B]): Free[F, B] = f(x)
+}
+
+case class Impure[F[_], A](xs: F[Free[F, A]])(implicit fun: Functor[F]) extends Free[F, A] {
+  def map[B](f: A=>B): Free[F, B] = Impure[F, B](fun.map(xs, (x: Free[F, A])=> x.map(f)))
+  def flatMap[B](f: A=>Free[F, B]): Free[F, B] = Impure[F, B](fun.map(xs, (x: Free[F, A])=> x.flatMap(f)))
+}
+
+
+
+
 case class Writer[A, W](output: W, value: A)(implicit w: Monoid[W]) {
   def map[B](f: A=>B): Writer[B, W] = {
     new Writer[B, W](output, f(value))
@@ -415,7 +477,10 @@ object AbstractNonsense {
     }
      */
   def main(argv: Array[String]): Unit = {
-
+    if (true) {
+      test
+      return
+    }
     val optionToList: Option ==> List = {
       new (Option ==> List) {
         override def apply[X](xs: Option[X]): List[X] = {
@@ -506,6 +571,30 @@ object AbstractNonsense {
         }
       }
     }
+  }
+
+  // unit of Cont monad
+  def negate[R](x: R): Cont[R, R] = {
+    Cont((k)=>k(x))
+  }
+
+  // delimited continations
+
+  def reset[R](k: Cont[R, R]): R = {
+    k.k(identity[R])
+  }
+
+  def shift[A, R](k: (A=>R)=>R): Cont[R, A] = {
+    Cont[R, A](k)
+  }
+
+  def test: Unit = {
+    val n = reset(for {
+      i <- negate(10)
+      j <- shift[Int, Int]((k)=>k(100))
+      z <- shift[Int, Int]((k)=>42)
+    } yield j+i)
+    println(n)
   }
 
 }
