@@ -1,6 +1,6 @@
 package containers
 
-import containers.AbstractNonsense.Id
+import containers.AbstractNonsense.{==>, Id}
 
 
 import scala.collection.mutable
@@ -82,7 +82,7 @@ trait Distributive[F[_], G[_]] extends NaturalTransformation[({type H[A] = F[G[A
   def transpose[X](xs: F[G[X]]): G[F[X]]
 }
 
-case class VerticalInterchange[F[_], G[_], H[_]] () {
+case class VerticalComposition[F[_], G[_], H[_]] () {
   def compose[X](n1: NaturalTransformation[F, G], n2: NaturalTransformation[G, H]):
   NaturalTransformation[F, H] = {
     new NaturalTransformation[F, H] {
@@ -93,7 +93,7 @@ case class VerticalInterchange[F[_], G[_], H[_]] () {
   }
 }
 
-case class HorizontalInterchange[F[_], G[_], H[_], I[_]](val f: Functor[F],
+case class HorizontalComposition[F[_], G[_], H[_], I[_]](val f: Functor[F],
                                                          val h: Functor[H]) {
   type FG[X] = F[G[X]]
   type HI[X] = H[I[X]]
@@ -127,9 +127,36 @@ case class HorizontalInterchange[F[_], G[_], H[_], I[_]](val f: Functor[F],
 // Right Kan Extension
 
 trait Ran[G[_], H[_], A] {
-  def apply[B](f: A => G[B]): H[B]
+  def apply[T](f: Id[A] => G[T]): H[T]
 }
 
+trait LeftKanExtension[G[_], H[_], A] {
+  def apply[T]: (H[T], G[T]=>Id[A])
+  def map[B](f: A=>B): LeftKanExtension[G, H, B] = {
+    val self = this
+    new LeftKanExtension[G, H, B] {
+      override def apply[R]: (H[R], (G[R]) => B) = {
+        val t = self.apply[R]
+        (t._1, (xs: G[R])=>f(t._2(xs)))
+      }
+    }
+  }
+
+  def extract(n: H==>G) = {
+    val t = apply[Nothing]
+    t._2(n.apply[Nothing](t._1))
+  }
+
+  def coflatMap[B](n: H==>G, f: A=>LeftKanExtension[G, H, B]): LeftKanExtension[G, H, B] = {
+    val self = this
+    new LeftKanExtension[G, H, B] {
+      override def apply[R]: (H[R], (G[R]) => B) = {
+        val t = self.apply[R]
+        (t._1, (xs: G[R])=>f(t._2(xs)).extract(n))
+      }
+    }
+  }
+}
 
 // Left Kan Extension
 
@@ -174,10 +201,45 @@ case class Constant[C, A](val const: C) {
   }
 }
 
+// Self-dual continuation monad
+trait Cont0[A] extends Ran[Id, Id, A] {
+  override def apply[R](f: A=>R): R
+  def extract: A = apply(identity[A](_))
+  def map[B](f: A=>B): Cont0[B] = {
+    val self = this
+    new Cont0[B] {
+      override def apply[R](k: (B) => R): R = {
+        self.apply((x: A)=>k(f(x)))
+      }
+    }
+  }
+  def flatMap[B](f: A=>Cont0[B]): Cont0[B] = {
+    val self = this
+    new Cont0[B] {
+      override def apply[R](k: (B) => R): R = {
+        self.apply((x: A)=>f(x).apply(k))
+      }
+    }
+  }
+  def coflatMap[B](f: Cont0[A]=>B): Cont0[B] = {
+    val self = this
+    new Cont0[B] {
+      override def apply[R](k: (B) => R): R = {
+        k(f(self))
+      }
+    }
+  }
+}
+
+trait Cocont0[A] extends LeftKanExtension[Id, Id, A] {
+  override def apply[T]: (T, T => A) // unimplementable
+}
+
 // Continuation Monad = Ran[Constant[R], Constant[R], A]
 
 case class Cont[R, A](k: (A=>R)=>R) extends Ran[({type G[X] = Constant[R, X]})#G, ({type G[X] = Constant[R, X]})#G, A] {
-  override def apply[B](f: (A) => Constant[R, B]): Constant[R, B] = {
+
+  override def apply[B](f: A => Constant[R, B]): Constant[R, B] = {
     Constant(k((x:A)=>f(x).const))
   }
   
@@ -208,6 +270,11 @@ case class Cocont[R, A] (get: R, set: R=>A) extends Lan[({type G[X] = Constant[R
   def map[B](f: A=>B): Cocont[R, B] = {
     Cocont[R, B](get, set.andThen(f))
   }
+
+  def coflatMap[B](f: Cocont[R, A]=> B): Cocont[R, B] = {
+    val self = this
+    Cocont[R, B](get, (x: R)=>f(Cocont[R, A](x, set)))
+  }
 }
 
 // Free Monad of a functor F = Pure A or Impure F[Free[F, A]]
@@ -225,9 +292,6 @@ case class Impure[F[_], A](xs: F[Free[F, A]])(implicit fun: Functor[F]) extends 
   def map[B](f: A=>B): Free[F, B] = Impure[F, B](fun.map(xs, (x: Free[F, A])=> x.map(f)))
   def flatMap[B](f: A=>Free[F, B]): Free[F, B] = Impure[F, B](fun.map(xs, (x: Free[F, A])=> x.flatMap(f)))
 }
-
-
-
 
 case class Writer[A, W](output: W, value: A)(implicit w: Monoid[W]) {
   def map[B](f: A=>B): Writer[B, W] = {
@@ -265,10 +329,6 @@ abstract class Cowriter[A, W](implicit w: Monoid[W]) extends (W=>A) {
     }
   }
 }
-
-// Functional A=>B
-// Imperative A=>F[B]
-// Reactive F[A]=>B
 
 // Codensity Monad
 trait Codensity[F[_], A] extends Ran[F, F, A] {
@@ -505,17 +565,17 @@ object AbstractNonsense {
         xs.reverse
       }
     }
-    val vert = new VerticalInterchange[List, List, List]()
-    val horiz = new HorizontalInterchange[List, List, List, List](listFunctor, listFunctor)
+    val vert = new VerticalComposition[List, List, List]()
+    val horiz = new HorizontalComposition[List, List, List, List](listFunctor, listFunctor)
     val id1 = vert.compose(reverse, reverse)
-    val comm = HorizontalInterchange[Option, List, List, Option](optionFunctor, listFunctor)
+    val comm = HorizontalComposition[Option, List, List, Option](optionFunctor, listFunctor)
     val transpose = comm.outerThenInner(optionToList, listToOption)
     val xs = List("a", "b", "c")
     println(id1(xs))
     val ys = Some(List("y"))
     println(transpose(ys))
     println(comm.innerThenOuter(optionToList, listToOption).apply(ys))
-    density
+    testDensity
   }
 
   def codensityMonad[F[_]](implicit m: Monad[F]): Monad[({type G[A] = Codensity[F, A]})#G] = {
@@ -527,7 +587,7 @@ object AbstractNonsense {
     }
   }
 
-  def density: Unit = {
+  def testDensity: Unit = {
     val w: Comonad[List] = new Comonad[List] {
       override def extract[A](xs: List[A]): A = xs.head
       override def map[A, B](xs: List[A], f: (A) => B): List[B] = xs.map(f)
@@ -578,7 +638,7 @@ object AbstractNonsense {
     Cont((k)=>k(x))
   }
 
-  // delimited continations
+  // delimited continuations
 
   def reset[R](k: Cont[R, R]): R = {
     k.k(identity[R])
@@ -596,5 +656,4 @@ object AbstractNonsense {
     } yield j+i)
     println(n)
   }
-
 }
